@@ -1,0 +1,6 @@
+<resources>
+    <style name="Theme.GmailHideAds" parent="@android:style/Theme.DeviceDefault.DayNight">
+        <item name="android:colorBackground">@color/brand_surface</item>
+        <item name="android:textColorPrimary">@color/brand_on_surface</item>
+    </style>
+</resources>

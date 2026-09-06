@@ -1,0 +1,4 @@
+<resources>
+    <string name="app_name">Gmail Hide Ads</string>
+    <string name="module_description">Drops sponsored conversation rows before Gmail can bind them</string>
+</resources>
