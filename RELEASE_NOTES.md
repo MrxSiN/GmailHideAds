@@ -1,17 +1,90 @@
 # Gmail Hide Ads v1.0.0
 
-First release.
+## First release
 
-Removes sponsored rows from the Gmail for Android conversation list by matching
-the ad row classes Gmail's layouts name — the one part of its ad surface that
-minification cannot rename — and collapsing the row before it is measured.
+Removes sponsored conversation rows from the Gmail Android app, on the modern
+libxposed API as implemented by [Vector](https://github.com/JingMatrix/Vector).
 
-The hook is on `ViewGroup.addView`, an Android framework method, so a Gmail
-update does not move it. No per-locale word list, and ordinary mail whose
-subject reads like a badge is left alone.
+Gmail is minified on every release, so almost nothing inside it keeps a stable
+name. Its advertisement rows are the exception, and that exception is what this
+module is built on.
 
-Requires an Xposed framework implementing libxposed API 101 or newer, such as
-Vector. Enable the module, add Gmail to its scope, then force-stop and reopen
-Gmail.
+### How it detects an advertisement
 
-Verified against Gmail 2026.08.17.974752392 on Android 17 with Vector 2.2.
+Every Gmail ad row is inflated from a layout that names its root class in XML,
+and R8 cannot rename a class a layout refers to by name. All six survive
+minification intact:
+
+```text
+com.google.android.gm.ads.adteaser.BasicAdTeaserItemView
+com.google.android.gm.ads.adteaser.VideoAdTeaserItemView
+com.google.android.gm.ads.adteaser.ImageCarouselAdTeaserItemView
+com.google.android.gm.ads.adteaser.RichButtonChipAdTeaserItemView
+com.google.android.gm.ads.adteaser.AppInstallButtonChipAdTeaserItemView
+com.google.android.gm.ads.adteaser.EuSingleImageAdTeaserItemView
+```
+
+Matching the class needs no per-locale word list, and cannot mistake a message
+whose subject reads "Ad" for an advertisement.
+
+### Added
+
+- Hooks `ViewGroup.addView(View, int, ViewGroup.LayoutParams)`, the overload the
+  other four public `addView` signatures funnel into and the first moment a row
+  has its layout parameters. The hook is on the Android framework, not on a
+  Gmail class, so a Gmail update does not move it.
+- Zeroes the row's layout height as well as setting it `GONE`, because a
+  RecyclerView layout manager still measures its attached children.
+- Deoptimizes the hook target, since ART inlines the shorter `addView` overloads
+  and a compiled caller would otherwise bypass the hook.
+- Walks superclasses when classifying a view, so a release that subclasses one
+  of these rows is still caught, and caches the verdict per class.
+- Waits for `Application.attach()` before installing, and installs through a
+  pipeline that isolates a failing layer instead of taking Gmail down with it.
+- Logs the class and view id of every removed row.
+- Carries no native library and no DEX-search dependency.
+
+### Verified
+
+Measured on a Pixel 8 Pro running Android 17 with Vector 2.2 (libxposed API 102)
+against Gmail `2026.08.17.974752392.Release` (`65972134`).
+
+The ad row class names were read out of that build's compiled layouts and
+confirmed present and unrenamed in its DEX. In use, a real sponsored row was
+collapsed in the Promotions tab, logged as
+`BasicAdTeaserItemView#basic_ad_teaser_item`, leaving the list with no
+advertisement and no empty gap. Gmail rendered normally across Primary,
+Promotions, Social, Updates and Forums under repeated scrolling, with no crash
+and no ordinary mail collapsed. The signed APK below was verified to carry the
+project signing certificate, then confirmed to load and install its layer from
+this published artifact.
+
+One caveat stated plainly: Gmail delivers these advertisements intermittently, so
+a side-by-side capture of the same row with the module disabled was not obtained.
+The evidence is the logged removal of a genuine ad row instance, not a paired
+screenshot.
+
+### Version metadata
+
+- Version name: `1.0.0`
+- Android version code: `1`
+- Git tag: `v1.0.0`
+- APK filename: `GmailHideAds-v1.0.0.apk`
+
+### Installing
+
+Install the APK, enable **Gmail Hide Ads** in your framework manager, then
+force-stop and reopen Gmail. The module declares a static scope of
+`com.google.android.gm`, so no scope selection is required.
+
+Confirm the framework log reports:
+
+```text
+Gmail Hide Ads v1.0.0: loading in com.google.android.gm, framework=Vector 2.2, api=102
+Layer installed: ad-teaser
+Active layers: 1/1
+```
+
+Gmail serves these advertisements in the **Promotions** and **Social** tabs. With
+the Promotions tab switched off in Gmail's settings, Gmail delivers none and the
+module has nothing to remove.

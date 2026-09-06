@@ -94,7 +94,13 @@ VERSION=$(sed -n 's/^val appVersion = "\([^"]*\)"/\1/p' "$APP_GRADLE")
 test -n "$VERSION" || fail "appVersion is not readable from app/build.gradle.kts"
 grep -q "MODULE_VERSION = \"$VERSION\"" "$SRC/GmailHideAdsModule.java" \
   || fail "MODULE_VERSION does not match appVersion $VERSION"
-grep -q "^## v$VERSION" "$ROOT/CHANGELOG.md" \
-  || fail "CHANGELOG.md has no entry for v$VERSION"
+# The changelog heading is "## <version> — <date>", matching the sibling
+# modules. The version is escaped so its dots are not treated as wildcards.
+CHANGELOG_HEADING=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
+grep -qE "^## $CHANGELOG_HEADING( |\$)" "$ROOT/CHANGELOG.md" \
+  || fail "CHANGELOG.md has no entry for $VERSION"
+
+grep -q "^# Gmail Hide Ads v$VERSION\$" "$ROOT/RELEASE_NOTES.md" \
+  || fail "RELEASE_NOTES.md does not open with the v$VERSION heading"
 
 echo "check-project: all structural checks passed for v$VERSION."
