@@ -10,10 +10,8 @@ import io.github.libxposed.api.XposedModule;
 
 import my.MrxSiN.gmailhideads.config.GmailProfile;
 import my.MrxSiN.gmailhideads.core.ModuleRuntime;
-import my.MrxSiN.gmailhideads.detect.AdLabelDetector;
-import my.MrxSiN.gmailhideads.detect.AdUriDetector;
-import my.MrxSiN.gmailhideads.hook.AdLabelLayer;
-import my.MrxSiN.gmailhideads.hook.AdQueryLayer;
+import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
+import my.MrxSiN.gmailhideads.hook.AdTeaserLayer;
 import my.MrxSiN.gmailhideads.hook.HookContext;
 import my.MrxSiN.gmailhideads.hook.HookPipeline;
 
@@ -21,8 +19,8 @@ import my.MrxSiN.gmailhideads.hook.HookPipeline;
  * Modern Xposed API entry point, scoped to Gmail.
  *
  * <p>The entry owns lifecycle only. It decides when the host is ready and hands
- * the work to {@link HookPipeline}; what counts as an ad and how a row is
- * suppressed are decided elsewhere.</p>
+ * the work to {@link HookPipeline}; what counts as an advertisement and how a
+ * row is suppressed are decided elsewhere.</p>
  */
 public final class GmailHideAdsModule extends XposedModule {
 
@@ -95,8 +93,7 @@ public final class GmailHideAdsModule extends XposedModule {
         ModuleRuntime.log("Host: " + GmailProfile.describeHostVersion(appContext));
 
         HookPipeline pipeline = new HookPipeline(
-                new AdQueryLayer(new AdUriDetector()),
-                new AdLabelLayer(new AdLabelDetector())
+                new AdTeaserLayer(new AdTeaserViewDetector())
         );
 
         pipeline.installAll(new HookContext(hostClassLoader, appContext));

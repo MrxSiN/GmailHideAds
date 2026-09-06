@@ -11,6 +11,8 @@ SRC="$ROOT/app/src/main/java/my/MrxSiN/gmailhideads"
 XPOSED_META="$ROOT/app/src/main/resources/META-INF/xposed"
 APP_GRADLE="$ROOT/app/build.gradle.kts"
 MANIFEST="$ROOT/app/src/main/AndroidManifest.xml"
+DETECTOR="$SRC/detect/AdTeaserViewDetector.java"
+LAYER="$SRC/hook/AdTeaserLayer.java"
 
 fail() {
   echo "check-project: $1" >&2
@@ -29,20 +31,14 @@ for file in \
   "$SRC/config/GmailProfile.java" \
   "$SRC/core/ModuleRuntime.java" \
   "$SRC/core/ModuleStats.java" \
-  "$SRC/data/EmptyCursor.java" \
   "$SRC/detect/AdDetector.java" \
-  "$SRC/detect/AdLabelDetector.java" \
-  "$SRC/detect/AdLabelVocabulary.java" \
-  "$SRC/detect/AdUriDetector.java" \
-  "$SRC/hook/AdLabelLayer.java" \
-  "$SRC/hook/AdQueryLayer.java" \
+  "$DETECTOR" \
+  "$LAYER" \
   "$SRC/hook/HookContext.java" \
   "$SRC/hook/HookLayer.java" \
   "$SRC/hook/HookPipeline.java" \
-  "$SRC/ui/AdMarkerRegistry.java" \
-  "$SRC/ui/HiddenViewRegistry.java" \
-  "$SRC/ui/ListItemCollapser.java" \
-  "$SRC/ui/ViewTrees.java" ; do
+  "$SRC/ui/AdRowCollapser.java" \
+  "$SRC/ui/ViewDescriptions.java" ; do
   test -f "$file" || fail "missing $file"
 done
 
@@ -74,15 +70,24 @@ grep -q 'ANDROID_KEYSTORE_PATH' "$APP_GRADLE" \
   || fail "release signing must come from the environment"
 test ! -f "$ROOT/app/release.keystore" || fail "a keystore is checked in"
 
-# --- the module must stay hooked to framework methods, not obfuscated ones ---
-grep -q 'ContentResolver.class.getDeclaredMethod' "$SRC/hook/AdQueryLayer.java" \
-  || fail "the query layer no longer targets the framework"
-grep -q 'TextView.class.getDeclaredMethod' "$SRC/hook/AdLabelLayer.java" \
-  || fail "the label layer no longer targets the framework"
-grep -q 'ModuleRuntime.deoptimize' "$SRC/hook/AdQueryLayer.java" \
-  || fail "the query targets must be deoptimized or the hooks are inlined away"
-grep -q 'ModuleRuntime.deoptimize' "$SRC/hook/AdLabelLayer.java" \
-  || fail "the label target must be deoptimized or the hook is inlined away"
+# --- detection must stay on the signals verified against a real Gmail -------
+# Verified against Gmail 2026.08.17.974752392: the six ad row classes are the
+# only part of the ad surface R8 may not rename, because the layouts name them.
+grep -q '"com.google.android.gm.ads."' "$DETECTOR" \
+  || fail "the detector no longer matches Gmail's ads package"
+grep -q '"AdTeaserItemView"' "$DETECTOR" \
+  || fail "the detector no longer matches Gmail's ad row classes"
+grep -q 'getSuperclass' "$DETECTOR" \
+  || fail "the detector must match subclasses of an ad row"
+grep -q 'ViewGroup.class.getDeclaredMethod' "$LAYER" \
+  || fail "the teaser layer no longer targets the framework"
+grep -q 'ModuleRuntime.deoptimize' "$LAYER" \
+  || fail "the addView target must be deoptimized or the hook is inlined away"
+
+# Caption matching was removed on purpose: it needed a per-locale word list and
+# collapsed ordinary mail whose subject read like a badge.
+! grep -rq 'AdLabelVocabulary\|AdLabelDetector' "$SRC" \
+  || fail "caption matching must not come back"
 
 # --- version agreement ------------------------------------------------------
 VERSION=$(sed -n 's/^val appVersion = "\([^"]*\)"/\1/p' "$APP_GRADLE")

@@ -10,24 +10,28 @@ other framework that implements that API. The legacy
 
 ## How it works
 
-Gmail is minified on every release, so class and method names change constantly.
-Nothing in this module depends on them. Both layers hook Android framework
-methods, whose signatures are stable, and decide what to suppress from data that
-Gmail cannot obfuscate: the content URI a query reads from, and the caption a
-badge renders.
+Gmail is minified on every release, so almost nothing in it keeps a stable
+name. Its advertisement rows are the exception: each one is inflated from a
+layout that names its root class in XML, so R8 cannot rename them. In Gmail
+2026.08 that set is, all in `com.google.android.gm.ads.adteaser`:
 
-| Layer | Hook target | Suppresses |
-| --- | --- | --- |
-| `ad-query` | `ContentResolver.query` and `ContentProviderClient.query` | Rows loaded from Gmail's advertisement provider paths. The real cursor is wrapped so it keeps its schema and reports no rows — Gmail's ordinary "no ads available" path. |
-| `ad-label` | `TextView.setText` | Server-rendered sponsored rows. The badge caption is matched against a per-locale vocabulary, and the conversation row that owns it is collapsed. |
+`BasicAdTeaserItemView`, `VideoAdTeaserItemView`,
+`ImageCarouselAdTeaserItemView`, `RichButtonChipAdTeaserItemView`,
+`AppInstallButtonChipAdTeaserItemView`, `EuSingleImageAdTeaserItemView`.
 
-The two layers are independent. If one fails to install, the other still runs,
-and if both fail Gmail is left exactly as it was.
+The module hooks `ViewGroup.addView(View, int, LayoutParams)` — the overload the
+other four public `addView` signatures funnel into — and when the view being
+added is one of those classes it zeroes the row's height and marks it `GONE`
+before the row is ever measured. The hook is on the Android framework, not on
+Gmail, so a Gmail update does not move the hook point.
 
-A collapsed row is remembered along with the badge that caused the collapse.
-RecyclerView reuses the same views for organic mail seconds later, so the row is
-restored as soon as that exact badge is rebound to something that is not an
-advertisement.
+Matching the class instead of the rendered "Ad" badge means the rule needs no
+per-locale word list and cannot mistake a message whose subject happens to read
+"Ad" for an advertisement.
+
+There is no restore path, because none is needed: Gmail gives an advertisement
+its own RecyclerView item type, so a row of one of these classes is never
+rebound to ordinary mail.
 
 ## Build
 
@@ -54,14 +58,23 @@ base64-encoded), `ALIAS`, `STORE_PASSWORD` and `KEY_PASSWORD`.
 3. Confirm Gmail is in the module's scope.
 4. Force-stop Gmail and reopen it.
 
-Filter logcat for `GmailHideAds` to see which layers installed and what they
-suppressed.
+Filter logcat for `GmailHideAds` to see the framework it loaded on, the Gmail
+version it detected, and every row it removed:
 
-## Limitations
+```bash
+adb logcat -s GmailHideAds:V
+```
 
-The badge vocabulary in `AdLabelVocabulary` covers the languages Gmail ships;
-a locale that is missing there will not be matched by the `ad-label` layer.
-Adding one is a single line.
+Gmail only serves these ads in the **Promotions** and **Social** tabs. With the
+Promotions tab switched off in Gmail's settings there is nothing for the module
+to remove.
+
+## Verified against
+
+Gmail `2026.08.17.974752392.Release` (65972134) on Android 17, Vector 2.2
+(API 102). The ad row class names above were read out of that build's layouts;
+if a later Gmail renames them, the log line for a collapsed row names the view
+that matched, which is what a bug report needs.
 
 ## Licence
 
