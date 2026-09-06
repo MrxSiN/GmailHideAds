@@ -91,16 +91,30 @@ jobs:
         run: |
           KEYSTORE="$RUNNER_TEMP/gmailhideads-release.keystore"
 
+          # Every diagnosis below is emitted as a workflow annotation, not just
+          # to stderr, so it can be read without downloading the job log.
+          #
+          # This step runs under `set -eo pipefail`, so a failing pipeline would
+          # otherwise abort before its own error message is reached; each check
+          # is therefore written as a condition rather than a bare command.
+
           # A base64 secret copied out of a Windows text file carries CR
           # characters, and GNU base64 rejects those outright rather than
           # ignoring them, leaving a truncated keystore behind.
-          printf '%s' "$SIGNING_KEY_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE"
+          if ! printf '%s' "$SIGNING_KEY_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE" 2>/dev/null; then
+            echo "::error::SIGNING_KEY is not valid base64. Re-copy keystore-base64.txt with every line break removed."
+            exit 1
+          fi
           chmod 600 "$KEYSTORE"
 
           if [[ ! -s "$KEYSTORE" ]]; then
-            echo "SIGNING_KEY did not decode to a keystore. Re-copy the base64 file." >&2
+            echo "::error::SIGNING_KEY decoded to an empty file. The secret is blank or truncated."
             exit 1
           fi
+
+          # Size and format are not secret, and knowing them separates a bad
+          # paste from a bad password without revealing any key material.
+          echo "::notice::Keystore decoded: $(wc -c < "$KEYSTORE") bytes."
 
           # A password pasted with a trailing newline is the likeliest cause of
           # a signing failure, and the error Gradle raises for it does not say so.
@@ -120,17 +134,16 @@ jobs:
           export KEYSTORE_PASSWORD="$SIGNING_STORE_PASSWORD"
 
           if ! keytool -list -keystore "$KEYSTORE" -storepass:env KEYSTORE_PASSWORD > /dev/null 2>&1; then
-            echo "STORE_PASSWORD was rejected by the keystore." >&2
-            echo "The keystore itself decoded correctly, so check that secret for a trailing newline or space." >&2
+            echo "::error::STORE_PASSWORD was rejected. The keystore decoded correctly, so this secret is wrong or carries a trailing newline."
             exit 1
           fi
 
           if ! keytool -list -keystore "$KEYSTORE" -storepass:env KEYSTORE_PASSWORD -alias "$SIGNING_KEY_ALIAS" > /dev/null 2>&1; then
-            echo "STORE_PASSWORD is correct, but ALIAS does not name a key in this keystore." >&2
+            echo "::error::STORE_PASSWORD is correct, but ALIAS does not name a key in this keystore."
             exit 1
           fi
 
-          echo "Keystore decoded; STORE_PASSWORD and ALIAS verified."
+          echo "::notice::Keystore verified: STORE_PASSWORD and ALIAS both accepted."
 
       - name: Build release APK
         env:
