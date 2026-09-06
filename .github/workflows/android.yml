@@ -85,12 +85,52 @@ jobs:
 
           echo "enabled=true" >> "$GITHUB_OUTPUT"
 
-      - name: Decode release keystore
+      - name: Decode and verify release keystore
         if: steps.signing.outputs.enabled == 'true'
         shell: bash
         run: |
-          printf '%s' "$SIGNING_KEY_BASE64" | base64 --decode > "$RUNNER_TEMP/gmailhideads-release.keystore"
-          chmod 600 "$RUNNER_TEMP/gmailhideads-release.keystore"
+          KEYSTORE="$RUNNER_TEMP/gmailhideads-release.keystore"
+
+          # A base64 secret copied out of a Windows text file carries CR
+          # characters, and GNU base64 rejects those outright rather than
+          # ignoring them, leaving a truncated keystore behind.
+          printf '%s' "$SIGNING_KEY_BASE64" | tr -d '[:space:]' | base64 --decode > "$KEYSTORE"
+          chmod 600 "$KEYSTORE"
+
+          if [[ ! -s "$KEYSTORE" ]]; then
+            echo "SIGNING_KEY did not decode to a keystore. Re-copy the base64 file." >&2
+            exit 1
+          fi
+
+          # A password pasted with a trailing newline is the likeliest cause of
+          # a signing failure, and the error Gradle raises for it does not say so.
+          check_whitespace() {
+            if [[ "$2" != "$(printf '%s' "$2" | tr -d '[:space:]')" ]]; then
+              echo "::warning::Secret $1 contains whitespace. A trailing newline from copy-paste will break signing."
+            fi
+          }
+          check_whitespace ALIAS "$SIGNING_KEY_ALIAS"
+          check_whitespace STORE_PASSWORD "$SIGNING_STORE_PASSWORD"
+          check_whitespace KEY_PASSWORD "$SIGNING_KEY_PASSWORD"
+
+          # Fail here, in seconds and with a usable message, rather than inside
+          # a Gradle stack trace ninety seconds into the build. keytool reads
+          # the password from the environment so it never reaches the process
+          # list, and its output is discarded so no certificate detail is logged.
+          export KEYSTORE_PASSWORD="$SIGNING_STORE_PASSWORD"
+
+          if ! keytool -list -keystore "$KEYSTORE" -storepass:env KEYSTORE_PASSWORD > /dev/null 2>&1; then
+            echo "STORE_PASSWORD was rejected by the keystore." >&2
+            echo "The keystore itself decoded correctly, so check that secret for a trailing newline or space." >&2
+            exit 1
+          fi
+
+          if ! keytool -list -keystore "$KEYSTORE" -storepass:env KEYSTORE_PASSWORD -alias "$SIGNING_KEY_ALIAS" > /dev/null 2>&1; then
+            echo "STORE_PASSWORD is correct, but ALIAS does not name a key in this keystore." >&2
+            exit 1
+          fi
+
+          echo "Keystore decoded; STORE_PASSWORD and ALIAS verified."
 
       - name: Build release APK
         env:
