@@ -36,10 +36,10 @@ android {
     }
 
     defaultConfig {
-        applicationId = "my.MrxSiN.gmailhideads"
+        applicationId = "io.github.mrxsin.gmailhideads"
         minSdk = 26
         targetSdk = 36
-        versionCode = 1
+        versionCode = 2
         versionName = appVersion
     }
 
