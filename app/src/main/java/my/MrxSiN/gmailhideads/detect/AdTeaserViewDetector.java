@@ -5,6 +5,8 @@ import android.view.View;
 import java.util.Map;
 import java.util.concurrent.ConcurrentHashMap;
 
+import my.MrxSiN.gmailhideads.policy.GmailPolicy;
+
 /**
  * Recognises the row views Gmail renders an advertisement into.
  *
@@ -20,16 +22,17 @@ import java.util.concurrent.ConcurrentHashMap;
  * <p>Matching the class rather than the rendered badge caption means the rule
  * needs no per-locale word list and cannot mistake a message whose subject
  * happens to read "Ad" for an advertisement.</p>
+ *
+ * <p>The rule itself (the class or one of its superclasses is under
+ * {@code com.google.android.gm.ads.} and its name ends in
+ * {@code AdTeaserItemView}) is decided by {@code brainfuck/src/row.bf}; this
+ * class only caches the verdict per class.</p>
  */
-public final class AdTeaserViewDetector implements AdDetector<View> {
-
-    private static final String AD_PACKAGE_PREFIX = "com.google.android.gm.ads.";
-    private static final String AD_ROW_SUFFIX = "AdTeaserItemView";
+public final class AdTeaserViewDetector {
 
     /** addView is a hot path; each class is classified once. */
     private static final Map<Class<?>, Boolean> CACHE = new ConcurrentHashMap<>();
 
-    @Override
     public boolean isAd(View candidate) {
         if (candidate == null) {
             return false;
@@ -41,22 +44,13 @@ public final class AdTeaserViewDetector implements AdDetector<View> {
             return cached;
         }
 
-        boolean result = describesAdRow(type);
+        int verdict = GmailPolicy.adRow(type);
+        if (verdict == GmailPolicy.FAILED) {
+            // Fail open, and uncached, so the next row of this class asks again.
+            return false;
+        }
+        boolean result = verdict == 1;
         Boolean existing = CACHE.putIfAbsent(type, result);
         return existing == null ? result : existing;
-    }
-
-    /**
-     * Walks the superclasses so that a Gmail release which subclasses one of
-     * these views is still recognised.
-     */
-    private static boolean describesAdRow(Class<?> type) {
-        for (Class<?> cursor = type; cursor != null; cursor = cursor.getSuperclass()) {
-            String name = cursor.getName();
-            if (name.startsWith(AD_PACKAGE_PREFIX) && name.endsWith(AD_ROW_SUFFIX)) {
-                return true;
-            }
-        }
-        return false;
     }
 }

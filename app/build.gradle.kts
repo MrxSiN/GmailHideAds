@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val appVersion = "1.0.0"
+val appVersion = "2.0.0"
 
 val envKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
 val envKeystoreAlias = System.getenv("ANDROID_KEYSTORE_ALIAS")
@@ -12,6 +12,7 @@ val envKeyPassword = System.getenv("ANDROID_KEY_PASSWORD")
 android {
     namespace = "my.MrxSiN.gmailhideads"
     compileSdk = 36
+    ndkVersion = "28.2.13676358"
 
     /*
      * Release signing is supplied by the environment so that no credential ever
@@ -39,15 +40,33 @@ android {
         applicationId = "io.github.mrxsin.gmailhideads"
         minSdk = 26
         targetSdk = 36
-        versionCode = 2
+        versionCode = 3
         versionName = appVersion
+        // Brainfuck request timing in the policy counters: debug builds, or -PpolicyTiming.
+        buildConfigField("boolean", "POLICY_TIMING", project.hasProperty("policyTiming").toString())
+        testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+    }
+
+    sourceSets {
+        // The JVM suite (frozen legacy oracle, parity, robustness and
+        // benchmarks) also runs on devices: connectedDebugAndroidTest.
+        getByName("androidTest").java.srcDir("src/test/java")
+    }
+
+    // -PbenchmarkRelease runs the instrumented tests against the release build
+    // (not debuggable: JIT on, CheckJNI off, optimized native code), signed with
+    // the debug key. Local benchmarking only.
+    if (project.hasProperty("benchmarkRelease")) {
+        testBuildType = "release"
     }
 
     buildTypes {
         release {
             isMinifyEnabled = false
-            proguardFiles("proguard-rules.pro")
             releaseSigningConfig?.let { signingConfig = it }
+            if (project.hasProperty("benchmarkRelease")) {
+                signingConfig = signingConfigs.getByName("debug")
+            }
         }
     }
 
@@ -66,6 +85,25 @@ android {
         }
     }
 
+    buildFeatures {
+        buildConfig = true
+    }
+
+    // The Brainfuck policy core: brainfuck/src/*.bf compiled ahead of time by
+    // tools/bftool/gen.py into cpp/generated/, then by the NDK into
+    // libgmailbf.so. The generated C is committed, so a plain build needs no
+    // Python; checkBrainfuck (part of `check` and CI) rejects stale output.
+    externalNativeBuild {
+        cmake {
+            path = file("src/main/cpp/CMakeLists.txt")
+            version = "3.22.1"
+        }
+    }
+
+    testOptions {
+        unitTests.isReturnDefaultValues = true
+    }
+
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
@@ -82,4 +120,64 @@ androidComponents {
 
 dependencies {
     compileOnly("io.github.libxposed:api:102.0.0")
+
+    testImplementation("junit:junit:4.13.2")
+    testImplementation("io.github.libxposed:api:102.0.0")
+    androidTestImplementation("androidx.test:runner:1.6.2")
+    androidTestImplementation("androidx.test.ext:junit:1.2.1")
+    androidTestCompileOnly("io.github.libxposed:api:102.0.0")
+}
+
+// ---- Brainfuck core: generation, checks and the host build used by JVM tests.
+
+val python = if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
+val hostCoreLibrary = rootProject.layout.buildDirectory.file(
+    "bfhost/" + System.mapLibraryName("gmailbf")
+).get().asFile
+
+val generateBrainfuck by tasks.registering(Exec::class) {
+    group = "brainfuck"
+    description = "Lints brainfuck/src and regenerates the AOT C source, ABI constants and memory map."
+    workingDir = rootDir
+    commandLine(python, "tools/bftool/gen.py")
+}
+
+val checkBrainfuck by tasks.registering(Exec::class) {
+    group = "brainfuck"
+    description = "Fails when the generated C, ABI or memory map files are stale."
+    workingDir = rootDir
+    inputs.dir(rootProject.file("brainfuck"))
+    inputs.dir(rootProject.file("tools/bftool"))
+    inputs.dir("src/main/cpp/generated")
+    outputs.upToDateWhen { false }
+    commandLine(python, "tools/bftool/gen.py", "--check")
+}
+
+val buildHostCore by tasks.registering(Exec::class) {
+    group = "brainfuck"
+    description = "Builds libgmailbf for the host JVM (parity tests run the shipped AOT C)."
+    dependsOn(checkBrainfuck)
+    workingDir = rootDir
+    inputs.dir("src/main/cpp")
+    outputs.file(hostCoreLibrary)
+    commandLine(python, "tools/bftool/hostlib.py", System.getProperty("java.home"), hostCoreLibrary.absolutePath)
+}
+
+val testBrainfuck by tasks.registering(Exec::class) {
+    group = "brainfuck"
+    description = "Toolchain, reference-vs-IR-vs-AOT and randomized program tests (Python)."
+    dependsOn(checkBrainfuck)
+    workingDir = rootDir
+    commandLine(python, "-m", "unittest", "discover", "-s", "tests/compiler", "-v")
+}
+
+tasks.named("check") {
+    dependsOn(checkBrainfuck, testBrainfuck)
+}
+
+tasks.withType<Test>().configureEach {
+    dependsOn(buildHostCore)
+    inputs.file(hostCoreLibrary)
+    systemProperty("gmailbf.hostlib", hostCoreLibrary.absolutePath)
+    systemProperty("gmailbf.parityCases", project.findProperty("parityCases") ?: "20000")
 }

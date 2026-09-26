@@ -1,6 +1,5 @@
 <resources>
     <color name="ic_launcher_background">#FFFFFFFF</color>
-    <color name="brand_red">#FFEA4335</color>
     <color name="brand_surface">#FFFFFFFF</color>
     <color name="brand_on_surface">#FF1F1F1F</color>
 </resources>

@@ -5,12 +5,13 @@ import android.view.ViewGroup;
 
 import java.lang.reflect.Method;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicLong;
 
 import io.github.libxposed.api.XposedInterface;
 
 import my.MrxSiN.gmailhideads.core.ModuleRuntime;
-import my.MrxSiN.gmailhideads.core.ModuleStats;
-import my.MrxSiN.gmailhideads.detect.AdDetector;
+import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
+import my.MrxSiN.gmailhideads.policy.GmailPolicy;
 import my.MrxSiN.gmailhideads.ui.AdRowCollapser;
 import my.MrxSiN.gmailhideads.ui.ViewDescriptions;
 
@@ -23,21 +24,12 @@ import my.MrxSiN.gmailhideads.ui.ViewDescriptions;
  * measured. Hooking the framework rather than Gmail's list adapter keeps the
  * layer working across Gmail releases.</p>
  */
-public final class AdTeaserLayer implements HookLayer {
+public final class AdTeaserLayer {
 
-    private final AdDetector<View> detector;
-
-    public AdTeaserLayer(AdDetector<View> detector) {
-        this.detector = detector;
+    private AdTeaserLayer() {
     }
 
-    @Override
-    public String id() {
-        return "ad-teaser";
-    }
-
-    @Override
-    public void install(HookContext context) throws Throwable {
+    public static void install() throws Throwable {
         Method addView = ViewGroup.class.getDeclaredMethod(
                 "addView", View.class, int.class, ViewGroup.LayoutParams.class);
 
@@ -45,16 +37,17 @@ public final class AdTeaserLayer implements HookLayer {
         // without this the hook can be bypassed by an already compiled caller.
         ModuleRuntime.deoptimize(addView);
 
-        if (ModuleRuntime.hook(addView, new AddViewHooker(detector)) == null) {
+        if (ModuleRuntime.hook(addView, new AddViewHooker(new AdTeaserViewDetector())) == null) {
             throw new IllegalStateException("ViewGroup.addView hook rejected");
         }
     }
 
     private static final class AddViewHooker implements XposedInterface.Hooker {
 
-        private final AdDetector<View> detector;
+        private final AtomicLong collapsed = new AtomicLong();
+        private final AdTeaserViewDetector detector;
 
-        AddViewHooker(AdDetector<View> detector) {
+        AddViewHooker(AdTeaserViewDetector detector) {
             this.detector = detector;
         }
 
@@ -73,7 +66,10 @@ public final class AdTeaserLayer implements HookLayer {
                                     ? (ViewGroup.LayoutParams) rawParams
                                     : child.getLayoutParams()
                     );
-                    ModuleStats.recordCollapsedRow(ViewDescriptions.describe(child));
+                    // The view id survives Gmail's resource shrinking, so this
+                    // line is what makes a bug report actionable after a rename.
+                    ModuleRuntime.log("Collapsed advertisement row #" + collapsed.incrementAndGet()
+                            + ": " + ViewDescriptions.describe(child) + " (" + GmailPolicy.summary() + ")");
                 }
             }
 

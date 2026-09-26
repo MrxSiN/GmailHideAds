@@ -1,16 +1,21 @@
-package my.MrxSiN.gmailhideads.config;
+package my.MrxSiN.gmailhideads.legacy;
 
 import android.content.Context;
 import android.content.pm.PackageInfo;
 import android.content.pm.PackageManager;
 import android.os.Build;
 
-/** The single description of which host this module belongs in. */
-public final class GmailProfile {
+/**
+ * Frozen v1.0.0 policy (config/GmailProfile at 2f978ff), kept as the test
+ * oracle for scope.bf. Never edit.
+ *
+ * <p>The single description of which host this module belongs in.</p>
+ */
+public final class LegacyGmailProfile {
 
     public static final String TARGET_PACKAGE = "com.google.android.gm";
 
-    private GmailProfile() {
+    private LegacyGmailProfile() {
     }
 
     public static boolean isTargetPackage(String packageName) {

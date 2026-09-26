@@ -1,48 +1,71 @@
 <div align="center">
 
-# <img src="branding/gmail-hide-ads-icon.png" width="36" height="36"> Gmail Hide Ads
+<img src="docs/icon.svg" width="120" alt="Gmail Hide Ads">
 
-### A focused Xposed module for removing sponsored rows from the Gmail Android app
+# Gmail Hide Ads
 
-[![Android](https://img.shields.io/badge/Android-Vector-3DDC84?style=for-the-badge&logo=android&logoColor=white)](https://github.com/JingMatrix/Vector)
-[![API](https://img.shields.io/badge/libxposed%20API-102-brightgreen?style=for-the-badge)](https://github.com/libxposed/api)
-[![Target](https://img.shields.io/badge/Target-Gmail-EA4335?style=for-the-badge&logo=gmail&logoColor=white)](https://mail.google.com/)
-[![JDK](https://img.shields.io/badge/JDK-17%2B-ED8B00?style=for-the-badge&logo=openjdk&logoColor=white)](https://openjdk.org/)
+**An Xposed module that removes sponsored rows from the Gmail Android app, with its ad policy written in Brainfuck. Yes, really.**
+
+Sponsored rows are collapsed before Gmail measures them, not hidden after.
+
+<br>
+
+[![Release](https://img.shields.io/github/v/release/MrxSiN/GmailHideAds?include_prereleases&color=EA4335&label=release&style=for-the-badge)](https://github.com/MrxSiN/GmailHideAds/releases)
+[![Downloads](https://img.shields.io/github/downloads/MrxSiN/GmailHideAds/total?color=3DDC84&logo=android&logoColor=fff&style=for-the-badge)](https://github.com/MrxSiN/GmailHideAds/releases)
+[![Android](https://img.shields.io/badge/Android-8.0%2B-3DDC84?logo=android&logoColor=fff&style=for-the-badge)](#requirements)
+[![libxposed](https://img.shields.io/badge/libxposed-API%20102-E8A33D?style=for-the-badge)](https://github.com/libxposed/api)
 
 </div>
 
-<p align="center"><img src="branding/gmail-hide-ads-icon.png" width="160" alt="Gmail Hide Ads app icon"></p>
+---
 
-## ✨ Features
+> [!NOTE]
+> Gmail serves these advertisements only in the **Promotions** and **Social** tabs, and only
+> intermittently. With the Promotions tab switched off in Gmail's settings, Gmail delivers none and
+> the module has nothing to remove. See the [compatibility](#compatibility) table for what has
+> actually been tested.
 
-- Removes sponsored conversation rows from the Gmail inbox before they are measured.
-- Identifies an advertisement by its view class, which Gmail's own layouts name and minification cannot rename.
-- Needs no per-locale word list, and never mistakes a message whose subject reads "Ad" for an advertisement.
-- Waits for `Application.attach()` so Gmail's final application context is ready before the hook is installed.
-- Hooks an Android framework method rather than a Gmail class, so a Gmail update does not move the hook point.
-- Deoptimizes the hook target so ART cannot serve an inlined copy past the hook.
-- Classifies each view class once and caches the result, keeping a hot framework path cheap.
-- Fails open: if the layer cannot install, Gmail is left exactly as it was.
-- Carries no native library and no DEX-search dependency.
-- Limits its scope to the official Gmail Android package.
+## Why Brainfuck?
 
-## 🎯 Scope
+Surely nobody would write the decision logic of an ad blocker in Brainfuck.
 
-The module hooks only:
+Brainfuck was selected for its rich ecosystem, mature package manager, excellent Android SDK
+bindings, comprehensive type system, first-class coroutine support, and famously pleasant
+debugging experience.
 
-```text
-com.google.android.gm
-```
+Just joking.
 
-Do not enable additional applications in the module scope.
+The real idea is the one [ThreadsHideAds](https://github.com/MrxSiN/ThreadsHideAds) proved out and
+[TwitterHideAds](https://github.com/MrxSiN/TwitterHideAds) followed: **keep every decision about
+Gmail out of the Android code.** Which class names mark an advertisement, whether a superclass
+counts, which package and which process the module belongs in — that is the part that has to change
+when Gmail changes, and it now lives in one place that cannot touch anything else.
 
-## 🔍 How it works
+Brainfuck enforces that boundary, because it literally cannot call Android, Xposed or JNI. It reads
+bytes and writes bytes. Java reduces a view's class chain to one small code per character, sends it
+in one request, and does exactly what the answer says. GmailHideAds uses Brainfuck for its
+decision-policy core, while Android/Xposed integration remains Java/native.
 
-Gmail is minified on every release, so almost nothing inside it keeps a stable name. Its advertisement rows are the exception, and that exception is what this module is built on:
+The two programs are plain eight-command Brainfuck, compiled ahead of time to C and then to native
+code with the NDK. There is no interpreter in the APK. A request takes about 1 µs on a Pixel 8 Pro and
+runs once per view class; every later row of that class is answered from a cache.
 
-1. The module entry class extends `io.github.libxposed.api.XposedModule` and installs a lightweight `Application.attach()` guard from `onPackageReady()` rather than hooking immediately.
-2. Once Gmail supplies its real application context, the single hook layer is installed through a pipeline that isolates failures, so a layer that cannot install is logged and skipped instead of taking Gmail down with it.
-3. Every Gmail ad row is inflated from a layout that names its root class in XML. R8 cannot rename a class that a layout refers to by name, so these six survive minification intact:
+|  | |
+|---|---|
+| 🧹 **Collapsed before measure** | A sponsored row loses its height and its visibility the moment it is added to the list, so there is no gap and no flash of an ad. |
+| 🏷️ **Matches the class, not the badge** | Gmail's own layouts name the six ad row classes, so minification cannot rename them. No per-locale word list, and a message whose subject reads "Ad" is never touched. |
+| 🧠 **Policy in Brainfuck, compiled** | Every decision is Brainfuck, compiled ahead of time to native code. One native call per view class, no allocations. |
+| 🛟 **Fails open** | If the library or a request fails, the row is kept, and if the scope check fails, nothing is installed at all. |
+| 🧪 **Proven identical** | The 1.0.0 Java policy is kept as a test oracle; 634 229 comparisons per run, on the JVM and on an arm64 phone, check that old and new answers match. |
+
+---
+
+## What it removes
+
+A row is an advertisement when its view class, or any superclass, is named
+`com.google.android.gm.ads.…AdTeaserItemView`. Every Gmail ad row is inflated from a layout that
+names its root class in XML, and R8 cannot rename a class a layout refers to by name, so all six
+survive minification intact:
 
 ```text
 com.google.android.gm.ads.adteaser.BasicAdTeaserItemView
@@ -53,122 +76,239 @@ com.google.android.gm.ads.adteaser.AppInstallButtonChipAdTeaserItemView
 com.google.android.gm.ads.adteaser.EuSingleImageAdTeaserItemView
 ```
 
-4. The module hooks `ViewGroup.addView(View, int, ViewGroup.LayoutParams)`, the overload that the other four public `addView` signatures funnel into, and the first moment a row has its layout parameters.
-5. A view is classified by walking its superclasses for a name under `com.google.android.gm.ads.` ending in `AdTeaserItemView`, so a release that subclasses one of these is still recognized. The verdict is cached per class, because `addView` is a hot path.
-6. A matching row has its layout height zeroed and its visibility set to `GONE` before it is ever measured. Both are required: `GONE` stops the row drawing, but a RecyclerView layout manager still measures its attached children, so the height must be zero for the row to occupy no space.
-7. The hook target is deoptimized through `XposedInterface.deoptimize`. The shorter `addView` overloads are small enough for ART to inline, and without deoptimization an already compiled caller can bypass the hook.
+A Gmail release that subclasses one of these, under any name, is still caught. Ordinary mail is
+never touched: Gmail gives an advertisement its own RecyclerView item type, so a row of one of these
+classes is never rebound to a message, and there is nothing to restore.
 
-There is no restore path, and none is needed. Gmail gives an advertisement its own RecyclerView item type, so a row of one of these classes is never rebound to ordinary mail.
+<details>
+<summary><b>🚫 What was tried and dropped</b></summary>
+<br>
 
-Matching the class rather than the rendered badge is a deliberate choice. Gmail's English badge is the string resource `string/ad`, whose value is simply `Ad`; matching that text needed a word list in every language Gmail ships, and it collapsed ordinary mail during testing. The class name carries the same information and cannot be mistaken.
+| Approach | Why it went |
+|---|---|
+| Emptying the cursor Gmail loads ads from | Modern Gmail has no ad provider; the layer hooked every query and could never fire. |
+| Matching the rendered "Ad" badge | Gmail's English badge is `string/ad`, simply `Ad`. It needed a word list per language and collapsed ordinary mail in testing. |
 
-Gmail serves these advertisements in the **Promotions** and **Social** tabs. With the Promotions tab switched off in Gmail's settings, Gmail delivers none and the module has nothing to remove.
+</details>
 
-## ✅ Requirements
+---
 
-### Runtime
+## Status
 
-- A framework implementing the modern Xposed API, version 101 or newer. The legacy `de.robv.android.xposed` API is not used, so frameworks that only implement it cannot load this module. Two supported options:
-  - **Rooted:** [Vector](https://github.com/JingMatrix/Vector) on Android 8.1 or newer, with Magisk or KernelSU and Zygisk enabled.
-  - **Rootless:** [LSPatch](https://github.com/JingMatrix/LSPatch), which embeds Vector into a patched Gmail APK and loads modern libxposed modules through the same runtime. Use the `JingMatrix` fork; the archived `LSPosed/LSPatch` build predates the modern API and cannot load this module.
-- The official Gmail application (`com.google.android.gm`).
-- The **Gmail Hide Ads** APK installed and enabled in the framework manager, or baked into the patched APK in LSPatch integrated mode.
+**v2.0.0.** The decision policy moved from Java into two Brainfuck programs, compiled ahead of time.
+The 1.0.0 Java policy was frozen as an oracle first, and the new programs answer identically over
+634 229 randomized and exhaustive comparisons on the JVM and on an arm64 phone
+([`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md)).
 
-### Build environment
+The release version is `2.0.0` (`versionCode 3`).
 
-- Android Studio with JDK 17 or newer, **or** a standalone JDK 17+ setup.
-- Gradle 9.6.1 when building without an existing wrapper.
-- Android SDK Platform 36.
-- Git or a downloaded copy of the project source.
+### Compatibility
 
-## 🛠️ Build
+Each row is one setup somebody has actually run. If you try another, please open a pull request
+adding a row.
 
-From the project directory, build the release APK with the included wrapper:
+| Device | Android | Framework | Gmail | Module | Result | Tester | Date |
+|---|---|---|---|---|---|---|---|
+| Pixel 8 Pro | 17 | — (instrumented tests) | — | 2.0.0 | 16 policy tests pass on arm64: 634 229 parity comparisons, robustness, concurrency | @MrxSiN | 2026-09 |
+| Pixel 8 Pro | 17 | Vector 2.2 (API 102) | 2026.08.17.974752392 | 1.0.0 | Layer installed; a real sponsored row collapsed in Promotions, no gap; no ordinary mail touched | @MrxSiN | 2026-09 |
 
-#### Linux / macOS
+### Known limits
+
+- **2.0.0 in Gmail**: the policy is proven identical to 1.0.0 on the device, but 2.0.0 has not yet
+  been run inside Gmail under Vector.
+- Gmail serves ads intermittently, so no side-by-side capture of the same row with the module off
+  exists; the 1.0.0 evidence is the logged removal of a genuine ad row.
+- A RecyclerView can re-attach a cached row without `addView`. Report the Gmail version if an ad
+  briefly reappears while scrolling fast.
+- 32-bit and x86 devices ship the native library but have not been run.
+
+## Requirements
+
+| | |
+|---|---|
+| **Android** | 8.0 (API 26) or newer |
+| **App** | Gmail (`com.google.android.gm`) |
+| **Framework** | [Vector](https://github.com/JingMatrix/Vector) or another libxposed API 101+ framework, or [LSPatch](https://github.com/JingMatrix/LSPatch) |
+| **Root** | Required by Vector; the module itself asks for none |
+
+Built against the modern [libxposed API](https://github.com/libxposed/api)
+(`io.github.libxposed:api`), not the legacy `de.robv.android.xposed` bridge.
+
+## Install
+
+```
+1. Install the APK from Releases
+2. Enable Gmail Hide Ads in Vector
+3. Force-stop Gmail once, then open it
+```
+
+The module declares a **static scope** — Gmail only — so there is nothing to pick.
+
+The framework log shows what happened, in lines tagged `GmailHideAds`. A working start-up looks like:
+
+```text
+Gmail Hide Ads v2.0.0: loading in com.google.android.gm, framework=Vector 2.2, api=102, policyCore=brainfuck-aot abi=1.0
+Host: 2026.08.17.974752392.Release (65972134)
+Layer installed: ad-teaser
+Collapsed advertisement row #1: com.google.android.gm.ads.adteaser.BasicAdTeaserItemView#basic_ad_teaser_item (bfCalls=<n>, bfFailures=0, malformed=0)
+```
+
+<details>
+<summary><b>Without root: LSPatch</b></summary>
+<br>
+
+The module has no root-only calls, so LSPatch can embed it into Gmail:
+
+1. Install the LSPatch manager ([JingMatrix fork](https://github.com/JingMatrix/LSPatch); the
+   archived `LSPosed/LSPatch` predates the modern API).
+2. Patch Gmail with **Gmail Hide Ads**, in manager mode or embedded.
+3. Uninstall the store copy of Gmail, then install the patched APK.
+
+</details>
+
+---
+
+## How it works
+
+```
+Gmail / Android
+  → libxposed hook (Application.attach guard, ViewGroup.addView)
+  → Java host (class chain, per-class cache, deoptimization)
+  → normalized primitive facts: one small code per character of each class name
+  → JNI (one call)
+  → AOT-compiled Brainfuck policy (libgmailbf.so)
+  → yes / no
+  → Java host collapses the row
+```
+
+One rule decides where code goes: **if it needs Android, Java, Xposed or JNI, Java does it; if it
+decides what to do with what Java read, Brainfuck decides.**
+
+<details>
+<summary><b>Starting at the right moment</b></summary>
+<br>
+
+- Loading into a Gmail process first asks `scope.bf` whether the module belongs there: the Gmail
+  package, and the main process (or one the framework did not name). Then only a small
+  `Application.attach()` guard is installed, so Gmail has its real application context before
+  anything else.
+- The single layer hooks `ViewGroup.addView(View, int, ViewGroup.LayoutParams)`, the overload the
+  other four public `addView` signatures funnel into and the first moment a row has its layout
+  parameters. It is an Android framework method, so a Gmail update does not move it.
+- The hook target is deoptimized: the shorter `addView` overloads are small enough for ART to
+  inline, and an already compiled caller would otherwise bypass the hook.
+- A matching row has its height zeroed and its visibility set to `GONE`. Both are needed: `GONE`
+  stops the drawing, but a RecyclerView layout manager still measures attached children.
+
+</details>
+
+<details>
+<summary><b>The Brainfuck core</b></summary>
+<br>
+
+| Program | Decides |
+|---|---|
+| `row` | whether a class chain holds a name that starts with the ads package and ends with `AdTeaserItemView` |
+| `scope` | whether the package is Gmail and the process is one the module belongs in |
+
+Each program is a `.bf` file in `brainfuck/src/` with a normative specification in
+[`docs/policy/`](docs/policy/). Comments may not contain a command character, `%cell` comments name
+tape cells, `@cell` checkpoints assert where the data pointer is, and `~N` asserts the length of a
+run; `tools/bftool/lint.py` checks all of them. The optimizer turns the programs into C (clear and
+transfer loops, value propagation, equality tests become `switch`), every loop charges an execution
+budget, and the NDK builds `libgmailbf.so`. The tape lives on the caller's stack, so concurrent
+calls share nothing. Frame format, opcodes and memory semantics are in
+[`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md).
+
+</details>
+
+<details>
+<summary><b>Staying fast</b></summary>
+<br>
+
+`addView` is a hot path, so the verdict is cached per view class and a policy request runs once per
+class. On a Pixel 8 Pro (release build):
+
+| Case | Java 1.0.0 | Brainfuck 2.0.0 |
+|---|---|---|
+| every `addView` (cached verdict) | 0.12 µs | 0.12 µs |
+| first view of an ordinary class | 0.20 µs | 0.90 µs |
+| first view of a derived ad row | 0.24 µs | 1.34 µs |
+| scope, once per package load | 0.41 µs | 0.81 µs |
+
+The old check was two string comparisons, so the uncached request is slower than it was; it is paid
+once per class. Full percentiles are in
+[`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md#performance).
+
+</details>
+
+---
+
+## Build
 
 ```bash
+python tools/bftool/gen.py                      # check brainfuck/src, regenerate C, ABI and memory map
+python -m unittest discover -s tests/compiler   # optimizer, AOT and randomized program tests
+./gradlew :app:testDebugUnitTest                # JVM parity against the frozen 1.0.0 policy
 ./gradlew :app:assembleRelease
 ```
 
-#### Windows PowerShell
+The generated files are committed; the Gradle build checks them with `checkBrainfuck` and never
+edits them, so building the APK needs no Python. `scripts/check-project.sh` runs the static project
+checks.
 
-```powershell
-.\gradlew.bat :app:assembleRelease
+You need JDK 17+, Android SDK 36 with NDK 28.2.13676358 and CMake 3.22.1, Python 3.10+, and for the
+JVM tests a host C compiler (MSVC Build Tools on Windows, gcc or clang elsewhere).
+
+The release build is signed only when `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_ALIAS`,
+`ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD` are all set; otherwise it is produced
+unsigned. No credential is stored in this repository.
+
+CI checks the generated files and runs the Python and JVM tests, then builds the release APK and
+checks that every native library ships in it, on every push and pull request. A `v*` tag signs the
+APK, verifies its certificate and attaches it to the GitHub Release. Pull-request builds stay
+unsigned, because signing secrets are not exposed to pull-request code.
+
+## Design
+
+```
+brainfuck/src/      the two programs: every decision, word and limit
+brainfuck/          programs.json, constants.txt (ABI numbers), generated memory map
+docs/policy/        the normative specification of each program
+tools/bftool/       source checker, optimizer, C emitter, reference interpreter (tests only)
+app/src/main/cpp/   runtime, JNI glue and the generated C
+policy/             GmailPolicy, per-thread request encoding, response validation, counters
+GmailHideAdsModule  libxposed entry, scope check and bootstrap
+hook/               the addView layer and its deoptimization
+detect/, ui/        the per-class cache, row collapsing, log descriptions
 ```
 
-The generated APK will be located under:
+The layering, ABI, parity method and measurements are in
+[`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md).
 
-```text
-app/build/outputs/apk/release/
-```
+## Troubleshooting
 
-The release build is signed only when `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_ALIAS`, `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD` are all set in the environment; otherwise it is produced unsigned. No credential is stored in this repository.
-
-## 📦 Installation
-
-1. Build and install the release APK, or download it from the [latest release](https://github.com/MrxSiN/GmailHideAds/releases/latest).
-2. Open the framework manager. With LSPatch, patch Gmail in manager mode and select the module there, or patch it in integrated mode with the module embedded.
-3. Enable **Gmail Hide Ads**.
-4. The module declares a static scope of `com.google.android.gm` in `META-INF/xposed/scope.list`, so no scope selection is required.
-5. Force-stop Gmail once after installing or updating the module, then reopen it.
-6. Review the framework logs for entries beginning with:
-
-```text
-GmailHideAds
-```
-
-A working start-up logs the framework, the detected Gmail build, and the installed layer:
-
-```text
-Gmail Hide Ads v1.0.0: loading in com.google.android.gm, framework=Vector 2.2, api=102
-Host: 2026.08.17.974752392.Release (65972134)
-Layer installed: ad-teaser
-Active layers: 1/1
-```
-
-Each removal is logged with the class and view id that matched, which is what a bug report needs if a later Gmail renames something:
-
-```text
-Collapsed advertisement row #1: com.google.android.gm.ads.adteaser.BasicAdTeaserItemView#basic_ad_teaser_item
-```
-
-## 🧪 Validation status
-
-The release version is `1.0.0` (`versionCode 1`). The ad row class names were read out of the compiled layouts of Gmail `2026.08.17.974752392.Release` (`65972134`) and confirmed present and unrenamed in its DEX.
-
-The module was measured on a Pixel 8 Pro running Android 17 with Vector 2.2 (libxposed API 102). The layer installs, and a real sponsored row was collapsed in the Promotions tab, logged as `BasicAdTeaserItemView#basic_ad_teaser_item`, leaving the list with no advertisement and no empty gap. Gmail rendered normally throughout Primary, Promotions, Social, Updates and Forums under repeated scrolling, with no crash and no ordinary mail collapsed. The signed release APK was verified to carry the project signing certificate and was then confirmed to load and install its layer from the published artifact.
-
-One caveat is worth stating plainly: Gmail delivers these advertisements intermittently, so a side-by-side capture of the same row with the module disabled was not obtained. The evidence is the logged removal of a genuine ad row instance, not a paired screenshot.
-
-The included GitHub Actions workflow builds on every push, pull request, and manual run. A `v*` tag additionally builds, signs, verifies and attaches the release APK to the GitHub Release when the four signing secrets are configured. Pull-request builds remain unsigned, because signing secrets are not exposed to pull-request code.
-
-## 🩺 Troubleshooting
-
-| Problem | Suggested action |
-| --- | --- |
-| No advertisement is ever removed | This is expected when no advertisement is being served. Gmail shows these only in the Promotions and Social tabs; if the Promotions tab is switched off in Gmail's settings, there is nothing to remove. |
-| Sponsored rows still appear | Confirm the module is enabled and that the log reports `Active layers: 1/1`. If the layer installed but nothing is collapsed, Gmail has probably renamed its ad row classes. |
-| No module log entries at all | Verify the module is enabled and Gmail is in scope, then force-stop Gmail once. The framework must implement libxposed API 101 or newer. |
+| Problem | Try |
+|---|---|
+| No advertisement is ever removed | Expected when none is served. Gmail shows them only in Promotions and Social, and none at all with the Promotions tab switched off. |
+| Sponsored rows still appear | Check the log for `Layer installed: ad-teaser`. If the layer installed and nothing is collapsed, Gmail has probably renamed its ad row classes. |
+| No module log lines at all | Check the module is enabled, then force-stop Gmail once. The framework must implement libxposed API 101 or newer. |
+| `Brainfuck policy core unavailable` | `libgmailbf.so` could not load for the device ABI; nothing is installed. Reinstall the module APK. |
+| `Brainfuck policy request failed open` | A request was malformed or too large and the row was kept. Report the logged `op` and `kind`. |
 | `ViewGroup.addView hook rejected` | The framework refused the hook. Check that it reports API 101 or newer in the start-up line. |
-| Layer installs but rows are not collapsed after a Gmail update | Capture the `Collapsed advertisement row` lines, or their absence, along with the `Host:` line naming the Gmail build, and report them. |
-| An advertisement briefly reappears while scrolling fast | RecyclerView can re-attach a cached row through a path that bypasses `addView`. Report the Gmail version if this is reproducible. |
+| Broken after a Gmail update | Report the `Collapsed advertisement row` lines, or their absence, with the `Host:` line naming the Gmail build. |
 
-## 🙏 Credits
-
-This project depends on and benefits from the following open-source work:
+## Credits
 
 | Project | Contribution |
-| --- | --- |
-| [Vector](https://github.com/JingMatrix/Vector) by JingMatrix | Provides the ART hooking framework, and the method deoptimization used to reach inlined framework methods. Licensed under GPL-3.0. |
-| [LSPatch](https://github.com/JingMatrix/LSPatch) by JingMatrix | Embeds Vector into a patched APK, which is how this module runs without root. Licensed under GPL-3.0. |
-| [libxposed API](https://github.com/libxposed/api) | The modern Xposed module API this module compiles against. Licensed under Apache-2.0. |
+|---|---|
+| [libxposed API](https://github.com/libxposed/api), [Vector](https://github.com/JingMatrix/Vector), [LSPatch](https://github.com/JingMatrix/LSPatch) | The hooking API, framework and deoptimization the module runs on, and rootless embedding. |
+| [ThreadsHideAds](https://github.com/MrxSiN/ThreadsHideAds), [TwitterHideAds](https://github.com/MrxSiN/TwitterHideAds) | The Brainfuck toolchain (source checker, optimizer, AOT C emitter, reference interpreter), runtime and conventions, adapted from TwitterHideAds `v3.0.0`. |
 
-## ⚠️ Disclaimer
+## Disclaimer
 
-This project is not affiliated with, endorsed by, or sponsored by Google LLC.
-"Gmail" is a trademark of Google LLC and is used only to name the application
-this module targets. The module modifies Gmail's behaviour in memory on the
-user's own device; it does not redistribute or patch the Gmail APK, and it
-transmits nothing off the device. It is provided for educational and personal
-use. App updates may break the hook without notice.
+Not affiliated with, endorsed by or sponsored by Google LLC. "Gmail" is a trademark of Google LLC and
+is used only to name the app this module targets. The module changes Gmail's behaviour in memory on
+the user's own device; it does not redistribute or patch the Gmail APK, and it transmits nothing off
+the device. Provided for educational and personal use. Gmail updates may break the hook without
+notice.

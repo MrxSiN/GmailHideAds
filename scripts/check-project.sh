@@ -3,7 +3,8 @@
 # Fails the build when the module's structural invariants are broken. These are
 # the mistakes a compiler cannot catch: a missing Xposed descriptor, a legacy
 # API creeping back in, a hard-coded credential, or a version that no longer
-# agrees with itself.
+# agrees with itself. Policy behaviour is covered by the tests; generated-file
+# staleness by `python3 tools/bftool/gen.py --check`.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -13,6 +14,7 @@ APP_GRADLE="$ROOT/app/build.gradle.kts"
 MANIFEST="$ROOT/app/src/main/AndroidManifest.xml"
 DETECTOR="$SRC/detect/AdTeaserViewDetector.java"
 LAYER="$SRC/hook/AdTeaserLayer.java"
+WORKFLOW="$ROOT/.github/workflows/android.yml"
 
 fail() {
   echo "check-project: $1" >&2
@@ -28,17 +30,18 @@ for file in \
   "$XPOSED_META/module.prop" \
   "$XPOSED_META/scope.list" \
   "$SRC/GmailHideAdsModule.java" \
-  "$SRC/config/GmailProfile.java" \
   "$SRC/core/ModuleRuntime.java" \
-  "$SRC/core/ModuleStats.java" \
-  "$SRC/detect/AdDetector.java" \
   "$DETECTOR" \
   "$LAYER" \
-  "$SRC/hook/HookContext.java" \
-  "$SRC/hook/HookLayer.java" \
-  "$SRC/hook/HookPipeline.java" \
   "$SRC/ui/AdRowCollapser.java" \
-  "$SRC/ui/ViewDescriptions.java" ; do
+  "$SRC/ui/ViewDescriptions.java" \
+  "$SRC/policy/GmailPolicy.java" \
+  "$SRC/policy/BfAbi.java" \
+  "$ROOT/brainfuck/src/row.bf" \
+  "$ROOT/brainfuck/src/scope.bf" \
+  "$ROOT/app/src/main/cpp/generated/bf_programs.generated.c" \
+  "$ROOT/docs/policy/row.md" \
+  "$ROOT/docs/policy/scope.md" ; do
   test -f "$file" || fail "missing $file"
 done
 
@@ -73,12 +76,18 @@ test ! -f "$ROOT/app/release.keystore" || fail "a keystore is checked in"
 # --- detection must stay on the signals verified against a real Gmail -------
 # Verified against Gmail 2026.08.17.974752392: the six ad row classes are the
 # only part of the ad surface R8 may not rename, because the layouts name them.
-grep -q '"com.google.android.gm.ads."' "$DETECTOR" \
-  || fail "the detector no longer matches Gmail's ads package"
-grep -q '"AdTeaserItemView"' "$DETECTOR" \
-  || fail "the detector no longer matches Gmail's ad row classes"
-grep -q 'getSuperclass' "$DETECTOR" \
-  || fail "the detector must match subclasses of an ad row"
+# The rule itself lives in row.bf, whose comments cannot hold a dot; its
+# normative spec names the signals instead.
+grep -Fq '`com.google.android.gm.ads.`' "$ROOT/docs/policy/row.md" \
+  || fail "the row spec no longer names Gmail's ads package"
+grep -Fq '`AdTeaserItemView`' "$ROOT/docs/policy/row.md" \
+  || fail "the row spec no longer names Gmail's ad row classes"
+grep -q 'getSuperclass' "$SRC/policy/GmailPolicy.java" \
+  || fail "the policy request must carry the superclasses of a view"
+grep -q 'GmailPolicy.adRow' "$DETECTOR" \
+  || fail "the detector must ask the Brainfuck policy"
+grep -q 'GmailPolicy.inScope' "$SRC/GmailHideAdsModule.java" \
+  || fail "the entry must ask the Brainfuck policy for its scope"
 grep -q 'ViewGroup.class.getDeclaredMethod' "$LAYER" \
   || fail "the teaser layer no longer targets the framework"
 grep -q 'ModuleRuntime.deoptimize' "$LAYER" \
@@ -89,12 +98,28 @@ grep -q 'ModuleRuntime.deoptimize' "$LAYER" \
 ! grep -rq 'AdLabelVocabulary\|AdLabelDetector' "$SRC" \
   || fail "caption matching must not come back"
 
+# --- the Brainfuck core is built, tested and shipped ------------------------
+grep -q 'path = file("src/main/cpp/CMakeLists.txt")' "$APP_GRADLE" \
+  || fail "the native policy library is not built"
+grep -q 'gen.py --check' "$WORKFLOW" || fail "CI must reject stale generated Brainfuck output"
+grep -q 'unittest discover' "$WORKFLOW" || fail "CI must run the Brainfuck toolchain tests"
+grep -q 'testDebugUnitTest' "$WORKFLOW" || fail "CI must run the parity tests"
+grep -q 'libgmailbf.so' "$WORKFLOW" || fail "CI must check that the native library ships"
+
 # --- version agreement ------------------------------------------------------
 VERSION=$(sed -n 's/^val appVersion = "\([^"]*\)"/\1/p' "$APP_GRADLE")
 test -n "$VERSION" || fail "appVersion is not readable from app/build.gradle.kts"
-grep -q "MODULE_VERSION = \"$VERSION\"" "$SRC/GmailHideAdsModule.java" \
-  || fail "MODULE_VERSION does not match appVersion $VERSION"
-# The changelog heading is "## <version> — <date>", matching the sibling
+grep -q 'versionName = appVersion' "$APP_GRADLE" \
+  || fail "versionName must come from appVersion"
+grep -q 'MODULE_VERSION = BuildConfig.VERSION_NAME' "$SRC/GmailHideAdsModule.java" \
+  || fail "MODULE_VERSION must come from BuildConfig"
+VERSION_CODE=$(sed -n 's/^ *versionCode = \([0-9][0-9]*\)$/\1/p' "$APP_GRADLE")
+test -n "$VERSION_CODE" || fail "versionCode is not readable from app/build.gradle.kts"
+grep -Fq "\`$VERSION\` (\`versionCode $VERSION_CODE\`)" "$ROOT/README.md" \
+  || fail "README.md does not state $VERSION (versionCode $VERSION_CODE)"
+grep -Fq "Android version code: \`$VERSION_CODE\`" "$ROOT/RELEASE_NOTES.md" \
+  || fail "RELEASE_NOTES.md does not state versionCode $VERSION_CODE"
+# The changelog heading is "## <version> - <date>", matching the sibling
 # modules. The version is escaped so its dots are not treated as wildcards.
 CHANGELOG_HEADING=$(printf '%s' "$VERSION" | sed 's/\./\\./g')
 grep -qE "^## $CHANGELOG_HEADING( |\$)" "$ROOT/CHANGELOG.md" \
@@ -102,5 +127,10 @@ grep -qE "^## $CHANGELOG_HEADING( |\$)" "$ROOT/CHANGELOG.md" \
 
 grep -q "^# Gmail Hide Ads v$VERSION\$" "$ROOT/RELEASE_NOTES.md" \
   || fail "RELEASE_NOTES.md does not open with the v$VERSION heading"
+# The release job publishes docs/releases/v<version>.md as the release body.
+cmp -s "$ROOT/RELEASE_NOTES.md" "$ROOT/docs/releases/v$VERSION.md" \
+  || fail "RELEASE_NOTES.md must equal docs/releases/v$VERSION.md"
+grep -q 'body_path: docs/releases/' "$WORKFLOW" \
+  || fail "the release must publish docs/releases/<tag>.md"
 
 echo "check-project: all structural checks passed for v$VERSION."

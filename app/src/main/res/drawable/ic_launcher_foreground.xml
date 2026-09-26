@@ -1,33 +1,73 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!--
-  Envelope outline with a strike-through: the Gmail surface the module works
-  on, marked as suppressed.
--->
+<!-- A broken shield struck through over the Gmail M: Gmail, without its
+     ads. The M keeps clear of the strike through a clip, so the same
+     drawable is the themed (monochrome) layer. Source: docs/icon.svg,
+     written from the same geometry. -->
 <vector xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:aapt="http://schemas.android.com/aapt"
     android:width="108dp"
     android:height="108dp"
     android:viewportWidth="108"
     android:viewportHeight="108">
-
+    <group>
+        <clip-path android:pathData="M-11.88,115.78 L143.69,-39.79 L4.32,-179.16 L-151.25,-23.59 Z M-7.78,119.88 L147.79,-35.69 L287.16,103.68 L131.59,259.25 Z" />
+        <path
+            android:fillColor="#FFFC4540"
+            android:pathData="M41.2,45.53 L46.37,45.53 L46.37,61.21 Q46.37,62.05 45.53,62.05 L43,62.05 Q41.2,62.05 41.2,60.25 Z" />
+        <path android:pathData="M65.2,45.53 L60.02,45.53 L60.02,61.21 Q60.02,62.05 60.86,62.05 L63.4,62.05 Q65.2,62.05 65.2,60.25 Z">
+            <aapt:attr name="android:fillColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="0"
+                    android:startY="45.53"
+                    android:endX="0"
+                    android:endY="62.05">
+                    <item android:offset="0" android:color="#FF52CE6A" />
+                    <item android:offset="0.38" android:color="#FF12BC5E" />
+                    <item android:offset="0.6" android:color="#FF06ABC4" />
+                    <item android:offset="0.9" android:color="#FF3A8BFF" />
+                    <item android:offset="1" android:color="#FF3A8BFF" />
+                </gradient>
+            </aapt:attr>
+        </path>
+        <path
+            android:pathData="M43.78,45.53 L53.2,53.27 L62.62,45.53"
+            android:strokeWidth="5.17"
+            android:strokeLineCap="round"
+            android:strokeLineJoin="round">
+            <aapt:attr name="android:strokeColor">
+                <gradient
+                    android:type="linear"
+                    android:startX="41.2"
+                    android:startY="0"
+                    android:endX="65.2"
+                    android:endY="0">
+                    <item android:offset="0" android:color="#FFFF66A0" />
+                    <item android:offset="0.27" android:color="#FFFC4540" />
+                    <item android:offset="0.64" android:color="#FFFC4540" />
+                    <item android:offset="0.8" android:color="#FFFF8A1F" />
+                    <item android:offset="0.9" android:color="#FFFFC400" />
+                    <item android:offset="1" android:color="#FFFFE018" />
+                </gradient>
+            </aapt:attr>
+        </path>
+    </group>
     <path
-        android:pathData="M30,40h48a4,4 0 0 1 4,4v22a4,4 0 0 1 -4,4h-48a4,4 0 0 1 -4,-4v-22a4,4 0 0 1 4,-4z"
-        android:strokeColor="#EA4335"
-        android:strokeWidth="4"
-        android:fillColor="#00000000"
-        android:strokeLineJoin="round" />
-
-    <path
-        android:pathData="M27,42L54,60L81,42"
-        android:strokeColor="#EA4335"
-        android:strokeWidth="4"
-        android:fillColor="#00000000"
+        android:pathData="M38.28,66.66 L37.63,65.78 L37.04,64.85 L36.52,63.87 L36.07,62.85 L35.7,61.78 L35.4,60.66 L35.18,59.49 L35.05,58.27 L35,57 L35,56 L35,55 L35,54 L35,53 L35,52 L35,51 L35,50 L35,49 L35,48 L35,47 L35,46 L35,45 L35,44 L35,43 L35,42 L35,41 L35,40 L35.08,39.07 L35.33,38.29 L35.75,37.65 L36.33,37.16 L37.08,36.81 L38,36.6 L38,36.6 L39.01,36.16 L40.03,35.75 L41.04,35.38 L42.05,35.03 L43.07,34.71 L44.08,34.42 L45.09,34.17 L46.11,33.94 L47.12,33.74 L48.13,33.58 L49.15,33.44 L50.16,33.34 L51.17,33.26 L52.19,33.22 L53.2,33.2 L54.21,33.22 L55.23,33.26 L56.24,33.34 L57.25,33.44 L58.27,33.58 L59.28,33.74 L60.29,33.94 L61.31,34.17 L62.32,34.42 L63.33,34.71 L64.35,35.03 L65.36,35.38 L66.37,35.75 L67.39,36.16 L68.4,36.6"
+        android:strokeColor="#FF202124"
+        android:strokeWidth="2.8"
         android:strokeLineCap="round"
         android:strokeLineJoin="round" />
-
     <path
-        android:pathData="M28,72L80,36"
-        android:strokeColor="#1F1F1F"
-        android:strokeWidth="5"
-        android:fillColor="#00000000"
-        android:strokeLineCap="round" />
+        android:pathData="M71.4,48 L71.4,49 L71.4,50 L71.4,51 L71.4,52 L71.4,53 L71.4,54 L71.4,55 L71.4,56 L71.4,57 L71.35,58.27 L71.22,59.49 L71,60.66 L70.7,61.78 L70.33,62.85 L69.88,63.87 L69.36,64.85 L68.77,65.78 L68.12,66.66 L67.41,67.51 L66.64,68.31 L65.83,69.08 L64.96,69.8 L64.04,70.49 L63.09,71.14 L62.1,71.76 L61.07,72.34 L60.01,72.89 L58.92,73.41 L57.81,73.9 L56.68,74.37 L55.53,74.8 L54.37,75.21 L53.2,75.6 L52.03,75.21 L50.87,74.8 L49.72,74.37 L48.59,73.9 L47.48,73.41 L46.39,72.89"
+        android:strokeColor="#FF202124"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
+    <path
+        android:pathData="M32.6,75.4 L75.4,32.6"
+        android:strokeColor="#FF202124"
+        android:strokeWidth="2.8"
+        android:strokeLineCap="round"
+        android:strokeLineJoin="round" />
 </vector>

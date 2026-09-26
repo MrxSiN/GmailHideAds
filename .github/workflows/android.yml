@@ -17,8 +17,48 @@ permissions:
   contents: write
 
 jobs:
+  # Brainfuck toolchain, generated-file staleness, randomized program tests,
+  # Java-vs-Brainfuck parity and robustness tests. No secrets.
+  test:
+    name: Brainfuck and parity tests
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Check out repository
+        uses: actions/checkout@v4
+
+      - name: Set up JDK 17
+        uses: actions/setup-java@v4
+        with:
+          java-version: "17"
+          distribution: temurin
+
+      - name: Set up Gradle cache
+        uses: gradle/actions/setup-gradle@v4
+
+      - name: Generated Brainfuck output is up to date
+        run: python3 tools/bftool/gen.py --check
+
+      - name: Brainfuck toolchain and program tests (reference vs IR vs AOT, randomized, malformed frames)
+        run: python3 -m unittest discover -s tests/compiler -v
+
+      - name: Unit, parity and robustness tests (host build of libgmailbf)
+        run: |
+          chmod +x gradlew
+          ./gradlew testDebugUnitTest -PparityCases=40000 --no-daemon
+
+      - name: Upload test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: test-reports-${{ github.run_number }}
+          path: app/build/reports/tests/
+          if-no-files-found: ignore
+
   build:
     name: Build, sign and upload APK
+    needs: test
     runs-on: ubuntu-latest
     timeout-minutes: 30
 
@@ -161,6 +201,20 @@ jobs:
           test -f "$APK_PATH"
           echo "path=$APK_PATH" >> "$GITHUB_OUTPUT"
 
+          # The Brainfuck policy core must ship for every ABI, or the module
+          # fails open everywhere it is missing.
+          python3 - "$APK_PATH" <<'EOF'
+          import sys, zipfile
+          names = set(zipfile.ZipFile(sys.argv[1]).namelist())
+          required = ["META-INF/xposed/java_init.list", "META-INF/xposed/module.prop",
+                      "META-INF/xposed/scope.list", "classes.dex"]
+          required += ["lib/%s/libgmailbf.so" % abi for abi in ("arm64-v8a", "armeabi-v7a", "x86", "x86_64")]
+          missing = [n for n in required if n not in names]
+          if missing:
+              sys.exit("APK is missing %s" % missing)
+          print(sys.argv[1], "ships", len(required), "required entries")
+          EOF
+
           if [[ "${{ steps.signing.outputs.enabled }}" == "true" ]]; then
             APKSIGNER="$(find "$ANDROID_SDK_ROOT/build-tools" -type f -name apksigner | sort -V | tail -n 1)"
             test -n "$APKSIGNER"
@@ -184,7 +238,7 @@ jobs:
         with:
           tag_name: ${{ github.ref_name }}
           name: Gmail Hide Ads v${{ steps.metadata.outputs.version }}
-          body_path: RELEASE_NOTES.md
+          body_path: docs/releases/${{ github.ref_name }}.md
           files: ${{ steps.apk.outputs.path }}
           fail_on_unmatched_files: true
           token: ${{ github.token }}

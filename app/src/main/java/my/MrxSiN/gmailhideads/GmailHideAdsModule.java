@@ -1,6 +1,8 @@
 package my.MrxSiN.gmailhideads;
 
 import android.content.Context;
+import android.content.pm.PackageInfo;
+import android.os.Build;
 
 import java.lang.reflect.Method;
 import java.util.List;
@@ -8,54 +10,57 @@ import java.util.concurrent.atomic.AtomicBoolean;
 
 import io.github.libxposed.api.XposedModule;
 
-import my.MrxSiN.gmailhideads.config.GmailProfile;
 import my.MrxSiN.gmailhideads.core.ModuleRuntime;
-import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
 import my.MrxSiN.gmailhideads.hook.AdTeaserLayer;
-import my.MrxSiN.gmailhideads.hook.HookContext;
-import my.MrxSiN.gmailhideads.hook.HookPipeline;
+import my.MrxSiN.gmailhideads.policy.GmailPolicy;
 
 /**
  * Modern Xposed API entry point, scoped to Gmail.
  *
  * <p>The entry owns lifecycle only. It decides when the host is ready and hands
- * the work to {@link HookPipeline}; what counts as an advertisement and how a
- * row is suppressed are decided elsewhere.</p>
+ * the work to {@link AdTeaserLayer}; whether a package and process are in scope
+ * and what counts as an advertisement are decided by the Brainfuck policy in
+ * {@link GmailPolicy}, and how a row is suppressed is decided elsewhere.</p>
  */
 public final class GmailHideAdsModule extends XposedModule {
 
-    private static final String MODULE_VERSION = "1.0.0";
+    private static final String MODULE_VERSION = BuildConfig.VERSION_NAME;
+    private static final String TARGET_PACKAGE = "com.google.android.gm";
 
     private static final AtomicBoolean ATTACH_GUARD_INSTALLED = new AtomicBoolean(false);
     private static final AtomicBoolean BOOTSTRAPPED = new AtomicBoolean(false);
 
     private volatile String processName = "";
-    private volatile ClassLoader hostClassLoader;
 
     @Override
     public void onModuleLoaded(ModuleLoadedParam param) {
         ModuleRuntime.attach(this);
         processName = param.getProcessName();
+        if (!GmailPolicy.load()) {
+            ModuleRuntime.log("Brainfuck policy core unavailable; fail-open mode active: "
+                    + GmailPolicy.failure());
+        }
     }
 
     @Override
     public void onPackageReady(PackageReadyParam param) {
-        if (!GmailProfile.isTargetPackage(param.getPackageName())
-                || !GmailProfile.isTargetProcess(processName)) {
+        // Gmail runs several processes and ads are bound only in the main one.
+        // A library that failed to load answers no, so nothing is installed.
+        if (!GmailPolicy.inScope(param.getPackageName(), processName)) {
             return;
         }
         if (!ATTACH_GUARD_INSTALLED.compareAndSet(false, true)) {
             return;
         }
 
-        hostClassLoader = param.getClassLoader();
         ModuleRuntime.log("Gmail Hide Ads v" + MODULE_VERSION
                 + ": loading in " + processName
                 + ", framework=" + getFrameworkName()
                 + " " + getFrameworkVersion()
-                + ", api=" + getApiVersion());
+                + ", api=" + getApiVersion()
+                + ", policyCore=brainfuck-aot abi=" + GmailPolicy.abi());
 
-        installAttachGuard(hostClassLoader);
+        installAttachGuard(param.getClassLoader());
     }
 
     /**
@@ -90,12 +95,34 @@ public final class GmailHideAdsModule extends XposedModule {
         }
 
         Context appContext = rawContext instanceof Context ? (Context) rawContext : null;
-        ModuleRuntime.log("Host: " + GmailProfile.describeHostVersion(appContext));
+        ModuleRuntime.log("Host: " + describeHostVersion(appContext));
 
-        HookPipeline pipeline = new HookPipeline(
-                new AdTeaserLayer(new AdTeaserViewDetector())
-        );
+        // A layer that fails is logged and skipped; Gmail keeps working.
+        try {
+            AdTeaserLayer.install();
+            ModuleRuntime.log("Layer installed: ad-teaser");
+        } catch (Throwable throwable) {
+            ModuleRuntime.log("Layer failed, skipping: ad-teaser", throwable);
+        }
+    }
 
-        pipeline.installAll(new HookContext(hostClassLoader, appContext));
+    /**
+     * The installed Gmail version, for the log line that makes a bug report
+     * useful. Never throws: an unknown version is not a reason to abort.
+     */
+    @SuppressWarnings("deprecation")
+    private static String describeHostVersion(Context context) {
+        if (context == null) {
+            return "unknown (no application context)";
+        }
+        try {
+            PackageInfo info = context.getPackageManager().getPackageInfo(TARGET_PACKAGE, 0);
+            long versionCode = Build.VERSION.SDK_INT >= Build.VERSION_CODES.P
+                    ? info.getLongVersionCode()
+                    : info.versionCode;
+            return info.versionName + " (" + versionCode + ")";
+        } catch (Throwable throwable) {
+            return "unknown (" + throwable.getClass().getSimpleName() + ")";
+        }
     }
 }

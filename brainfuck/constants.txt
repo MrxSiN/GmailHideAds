@@ -1,0 +1,63 @@
+# Single source of truth for the Brainfuck policy ABI
+# (docs/BRAINFUCK_ARCHITECTURE.md). tools/bftool/gen.py exports every constant
+# below into app/src/main/java/my/MrxSiN/gmailhideads/policy/BfAbi.java and
+# app/src/main/cpp/generated/bf_abi.h. Values are stable: never renumber, only
+# append. A change to a request or response layout bumps ABI_MAJOR.
+
+const ABI_MAJOR = 1
+const ABI_MINOR = 0
+const HEADER_SIZE = 8
+const RESPONSE_BIT = 0x80
+
+# Program ids (brainfuck/programs.json order).
+const PROG_ROW = 0
+const PROG_SCOPE = 1
+
+# Response status (header byte 3 of a response).
+const ST_OK = 0
+const ST_BAD_VERSION = 1
+const ST_BAD_OPCODE = 2
+
+# ---- row.bf
+const OP_AD_ROW = 0x10
+
+# ---- scope.bf
+const OP_SCOPE = 0x20
+
+# Verdicts (OP_AD_ROW, OP_SCOPE).
+const V_NO = 0
+const V_YES = 1
+
+# Name alphabet (host normalization, case sensitive): only the characters of
+# "com.google.android.gm.ads." and "AdTeaserItemView" are told apart.
+const NC_OTHER = 0
+const NC_DOT = 1
+const NC_C = 2
+const NC_O = 3
+const NC_M = 4
+const NC_G = 5
+const NC_L = 6
+const NC_E = 7
+const NC_A = 8
+const NC_N = 9
+const NC_D = 10
+const NC_R = 11
+const NC_I = 12
+const NC_S = 13
+const NC_T = 14
+const NC_W = 15
+const NC_UP_A = 16
+const NC_UP_T = 17
+const NC_UP_I = 18
+const NC_UP_V = 19
+
+# Request framing limits.
+const MAX_CHUNK = 255
+const MAX_NAMES = 255
+
+# Runtime (bf_engine.c).
+const RUNTIME_TAPE_MAX = 256
+const RUNTIME_IN_CAP = 1048576
+const RUNTIME_OUT_CAP = 1024
+const BUDGET_BASE = 65536
+const BUDGET_PER_BYTE = 64

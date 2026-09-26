@@ -1,0 +1,6 @@
+{
+  "programs": [
+    {"id": 0, "name": "row", "source": "src/row.bf", "tape": 32},
+    {"id": 1, "name": "scope", "source": "src/scope.bf", "tape": 32}
+  ]
+}
