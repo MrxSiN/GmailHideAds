@@ -16,7 +16,8 @@ idiom). Each copied file names its origin; the changes are listed at the end.
 ```text
 Gmail / Android
     |
-libxposed hook (Application.attach guard, ViewGroup.addView)
+libxposed hook (Application.attach guard, each ad row's onFinishInflate;
+                ViewGroup.addView as the fallback)
     |
 Java host: class names, per-class cache, deoptimization, row collapsing
     |
@@ -46,7 +47,8 @@ own; everything with side effects stays out.
 
 | Stays in Java or C | Why |
 | --- | --- |
-| hooks, `Application.attach` guard, deoptimization | framework API calls |
+| hooks, `Application.attach` guard, deoptimization, hot reload | framework API calls |
+| listing the ads package with DexKit, and caching the names it found | DexKit native calls and Gmail's preferences; `row.bf` still judges every class |
 | walking `getSuperclass()`, `Class.getName()` | reflection; reduced to name codes before the call |
 | text → name codes (one table lookup per char) | cheapest normalization |
 | per-class verdict cache | Java state on the `addView` hot path |

@@ -50,7 +50,7 @@ grep -q '^my.MrxSiN.gmailhideads.GmailHideAdsModule$' "$XPOSED_META/java_init.li
   || fail "java_init.list does not name the entry class"
 grep -q '^com.google.android.gm$' "$XPOSED_META/scope.list" \
   || fail "scope.list does not name Gmail"
-grep -q '^minApiVersion=101$' "$XPOSED_META/module.prop" || fail "unexpected minApiVersion"
+grep -q '^minApiVersion=102$' "$XPOSED_META/module.prop" || fail "unexpected minApiVersion"
 grep -q '^targetApiVersion=102$' "$XPOSED_META/module.prop" || fail "unexpected targetApiVersion"
 grep -q 'compileOnly("io.github.libxposed:api:102.0.0")' "$APP_GRADLE" \
   || fail "the modern Xposed API dependency is missing"

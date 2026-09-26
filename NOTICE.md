@@ -12,4 +12,6 @@ The launcher icon (`docs/icon.svg`, `app/src/main/res/drawable/ic_launcher_foreg
 is vector artwork for this project; the Gmail "M" in it is a trademark of Google LLC and is
 used only to identify the app the module targets.
 
+DexKit (`org.luckypray:dexkit`) is distributed under LGPL-3.0-or-later.
+
 This project is licensed under the GNU General Public License v3.0.

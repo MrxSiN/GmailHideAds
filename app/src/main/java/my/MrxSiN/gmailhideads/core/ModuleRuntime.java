@@ -3,6 +3,8 @@ package my.MrxSiN.gmailhideads.core;
 import android.util.Log;
 
 import java.lang.reflect.Executable;
+import java.util.Set;
+import java.util.concurrent.ConcurrentHashMap;
 
 import io.github.libxposed.api.XposedInterface;
 
@@ -15,12 +17,19 @@ import io.github.libxposed.api.XposedInterface;
  * class in this module depends on this abstraction rather than on a concrete
  * framework, so the detectors and hook layers stay testable and free of
  * framework imports.</p>
+ *
+ * <p>Every hook carries a stable id. A hot-reloaded generation that installs a
+ * hook with the same id on the same method replaces the old one in place, and
+ * {@link #owns} tells which hooks of the previous generation were not taken
+ * over.</p>
  */
 public final class ModuleRuntime {
 
     private static final String TAG = "GmailHideAds";
 
     private static volatile XposedInterface api;
+
+    private static final Set<String> HOOK_IDS = ConcurrentHashMap.newKeySet();
 
     private ModuleRuntime() {
     }
@@ -48,18 +57,26 @@ public final class ModuleRuntime {
     }
 
     /**
-     * Installs a hook, or returns {@code null} when the framework interface is
-     * missing or the framework rejected the hook.
+     * Installs a hook under {@code id}, or returns {@code null} when the
+     * framework interface is missing or the framework rejected the hook.
      */
     public static XposedInterface.HookHandle hook(
             Executable origin,
+            String id,
             XposedInterface.Hooker hooker
     ) {
         XposedInterface framework = api;
         if (framework == null || origin == null) {
             return null;
         }
-        return framework.hook(origin).intercept(hooker);
+        XposedInterface.HookHandle handle = framework.hook(origin).setId(id).intercept(hooker);
+        HOOK_IDS.add(id);
+        return handle;
+    }
+
+    /** True when this generation installed a hook with that id. */
+    public static boolean owns(String id) {
+        return id != null && HOOK_IDS.contains(id);
     }
 
     /**

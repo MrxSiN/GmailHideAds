@@ -48,7 +48,9 @@ decision-policy core, while Android/Xposed integration remains Java/native.
 
 The two programs are plain eight-command Brainfuck, compiled ahead of time to C and then to native
 code with the NDK. There is no interpreter in the APK. A request takes about 1 µs on a Pixel 8 Pro and
-runs once per view class; every later row of that class is answered from a cache.
+runs once per view class; every later row of that class is answered from a cache. DexKit finds the
+ad row classes once, so only those classes are hooked, and a new build hot reloads into a running
+Gmail.
 
 |  | |
 |---|---|
@@ -56,6 +58,8 @@ runs once per view class; every later row of that class is answered from a cache
 | 🏷️ **Matches the class, not the badge** | Gmail's own layouts name the six ad row classes, so minification cannot rename them. No per-locale word list, and a message whose subject reads "Ad" is never touched. |
 | 🧠 **Policy in Brainfuck, compiled** | Every decision is Brainfuck, compiled ahead of time to native code. One native call per view class, no allocations. |
 | 🛟 **Fails open** | If the library or a request fails, the row is kept, and if the scope check fails, nothing is installed at all. |
+| 🎯 **Hooks only the ad rows** | DexKit lists Gmail's ads package once, `row.bf` picks the rows, and only their `onFinishInflate` is hooked. The names are cached per Gmail build, so a cold start pays about 2 ms. |
+| 🔁 **No restart to update** | Vector hot reloads a new build into a running Gmail process. |
 | 🧪 **Proven identical** | The 1.0.0 Java policy is kept as a test oracle; 634 229 comparisons per run, on the JVM and on an arm64 phone, check that old and new answers match. |
 
 ---
@@ -95,12 +99,15 @@ classes is never rebound to a message, and there is nothing to restore.
 
 ## Status
 
+**v2.1.0.** DexKit discovery of the ad row classes, hooks on those classes only, and hot reload.
+On a Pixel 8 Pro the scan takes about 300 ms once per Gmail build and 2 ms from the cache after that.
+
 **v2.0.0.** The decision policy moved from Java into two Brainfuck programs, compiled ahead of time.
 The 1.0.0 Java policy was frozen as an oracle first, and the new programs answer identically over
 634 229 randomized and exhaustive comparisons on the JVM and on an arm64 phone
 ([`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md)).
 
-The release version is `2.0.0` (`versionCode 3`).
+The release version is `2.1.0` (`versionCode 4`).
 
 ### Compatibility
 
@@ -109,17 +116,17 @@ adding a row.
 
 | Device | Android | Framework | Gmail | Module | Result | Tester | Date |
 |---|---|---|---|---|---|---|---|
+| Pixel 8 Pro | 17 | Vector 2.2 (API 102) | 2026.09.07.986350278 | 2.1.0 | DexKit found 6 row classes (289 ms, 2 ms cached); inflate layer installed; hot reload over 2.0.0 in the running process. No ad served, so no live collapse yet | @MrxSiN | 2026-09 |
 | Pixel 8 Pro | 17 | — (instrumented tests) | — | 2.0.0 | 16 policy tests pass on arm64: 634 229 parity comparisons, robustness, concurrency | @MrxSiN | 2026-09 |
 | Pixel 8 Pro | 17 | Vector 2.2 (API 102) | 2026.08.17.974752392 | 1.0.0 | Layer installed; a real sponsored row collapsed in Promotions, no gap; no ordinary mail touched | @MrxSiN | 2026-09 |
 
 ### Known limits
 
-- **2.0.0 in Gmail**: the policy is proven identical to 1.0.0 on the device, but 2.0.0 has not yet
-  been run inside Gmail under Vector.
+- **2.1.0 in Gmail**: discovery, the inflate hooks and hot reload run inside Gmail, but no ad was
+  served while testing, so the new hook has not yet been seen collapsing a live row.
 - Gmail serves ads intermittently, so no side-by-side capture of the same row with the module off
   exists; the 1.0.0 evidence is the logged removal of a genuine ad row.
-- A RecyclerView can re-attach a cached row without `addView`. Report the Gmail version if an ad
-  briefly reappears while scrolling fast.
+- Vector hot reloads only when the `versionCode` changes; force-stop Gmail otherwise.
 - 32-bit and x86 devices ship the native library but have not been run.
 
 ## Requirements
@@ -128,7 +135,7 @@ adding a row.
 |---|---|
 | **Android** | 8.0 (API 26) or newer |
 | **App** | Gmail (`com.google.android.gm`) |
-| **Framework** | [Vector](https://github.com/JingMatrix/Vector) or another libxposed API 101+ framework, or [LSPatch](https://github.com/JingMatrix/LSPatch) |
+| **Framework** | [Vector](https://github.com/JingMatrix/Vector) or another libxposed API 102 framework, or [LSPatch](https://github.com/JingMatrix/LSPatch) |
 | **Root** | Required by Vector; the module itself asks for none |
 
 Built against the modern [libxposed API](https://github.com/libxposed/api)
@@ -147,9 +154,10 @@ The module declares a **static scope** — Gmail only — so there is nothing to
 The framework log shows what happened, in lines tagged `GmailHideAds`. A working start-up looks like:
 
 ```text
-Gmail Hide Ads v2.0.0: loading in com.google.android.gm, framework=Vector 2.2, api=102, policyCore=brainfuck-aot abi=1.0
-Host: 2026.08.17.974752392.Release (65972134)
-Layer installed: ad-teaser
+Gmail Hide Ads v2.1.0: loading in com.google.android.gm, framework=Vector 2.2, api=102, policyCore=brainfuck-aot abi=1.0
+Host: 2026.09.07.986350278.Release (66020097)
+6 ad row class(es) from cache in 2 ms
+Layer installed: ad-teaser inflate
 Collapsed advertisement row #1: com.google.android.gm.ads.adteaser.BasicAdTeaserItemView#basic_ad_teaser_item (bfCalls=<n>, bfFailures=0, malformed=0)
 ```
 
@@ -172,7 +180,7 @@ The module has no root-only calls, so LSPatch can embed it into Gmail:
 
 ```
 Gmail / Android
-  → libxposed hook (Application.attach guard, ViewGroup.addView)
+  → libxposed hook (Application.attach guard, each ad row's onFinishInflate)
   → Java host (class chain, per-class cache, deoptimization)
   → normalized primitive facts: one small code per character of each class name
   → JNI (one call)
@@ -192,11 +200,18 @@ decides what to do with what Java read, Brainfuck decides.**
   package, and the main process (or one the framework did not name). Then only a small
   `Application.attach()` guard is installed, so Gmail has its real application context before
   anything else.
-- The single layer hooks `ViewGroup.addView(View, int, ViewGroup.LayoutParams)`, the overload the
-  other four public `addView` signatures funnel into and the first moment a row has its layout
-  parameters. It is an Android framework method, so a Gmail update does not move it.
-- The hook target is deoptimized: the shorter `addView` overloads are small enough for ART to
-  inline, and an already compiled caller would otherwise bypass the hook.
+- At attach, DexKit lists the classes in `com.google.android.gm.ads` and `row.bf` judges each one.
+  The names found are kept in Gmail's preferences, keyed by the Gmail APK path and the module version
+  code, so later cold starts skip the scan. DexKit is closed before the first row is drawn.
+- Each ad row class declares its own `onFinishInflate`, which runs after the inflater gave the row
+  its layout parameters and before the list measures it. Only those methods are hooked. Gmail's bind
+  sets the row's visibility after inflation, so the row is collapsed again whenever it is attached.
+- When discovery finds nothing, or a class cannot be hooked, the fallback hooks
+  `ViewGroup.addView(View, int, ViewGroup.LayoutParams)`, the overload the other public `addView`
+  signatures funnel into, and deoptimizes it so an inlined caller cannot bypass it.
+- Hot reload: the running generation hands over Gmail's class loader and application context; the
+  new one hooks again under the same ids, which replace the old hooks in place, and takes the rest
+  off.
 - A matching row has its height zeroed and its visibility set to `GONE`. Both are needed: `GONE`
   stops the drawing, but a RecyclerView layout manager still measures attached children.
 
@@ -278,8 +293,9 @@ docs/policy/        the normative specification of each program
 tools/bftool/       source checker, optimizer, C emitter, reference interpreter (tests only)
 app/src/main/cpp/   runtime, JNI glue and the generated C
 policy/             GmailPolicy, per-thread request encoding, response validation, counters
-GmailHideAdsModule  libxposed entry, scope check and bootstrap
-hook/               the addView layer and its deoptimization
+GmailHideAdsModule  libxposed entry, scope check, bootstrap and hot reload
+discover/           DexKit listing of the ads package, and its per-build cache
+hook/               the onFinishInflate layer, and the addView fallback
 detect/, ui/        the per-class cache, row collapsing, log descriptions
 ```
 
@@ -291,11 +307,12 @@ The layering, ABI, parity method and measurements are in
 | Problem | Try |
 |---|---|
 | No advertisement is ever removed | Expected when none is served. Gmail shows them only in Promotions and Social, and none at all with the Promotions tab switched off. |
+| `using the addView fallback` | DexKit found no hookable row class; the broad layer runs instead. Report the `Host:` line. |
 | Sponsored rows still appear | Check the log for `Layer installed: ad-teaser`. If the layer installed and nothing is collapsed, Gmail has probably renamed its ad row classes. |
-| No module log lines at all | Check the module is enabled, then force-stop Gmail once. The framework must implement libxposed API 101 or newer. |
+| No module log lines at all | Check the module is enabled, then force-stop Gmail once. The framework must implement libxposed API 102. |
 | `Brainfuck policy core unavailable` | `libgmailbf.so` could not load for the device ABI; nothing is installed. Reinstall the module APK. |
 | `Brainfuck policy request failed open` | A request was malformed or too large and the row was kept. Report the logged `op` and `kind`. |
-| `ViewGroup.addView hook rejected` | The framework refused the hook. Check that it reports API 101 or newer in the start-up line. |
+| `ViewGroup.addView hook rejected` | The framework refused the hook. Check that it reports API 102 in the start-up line. |
 | Broken after a Gmail update | Report the `Collapsed advertisement row` lines, or their absence, with the `Host:` line naming the Gmail build. |
 
 ## Credits
@@ -303,6 +320,7 @@ The layering, ABI, parity method and measurements are in
 | Project | Contribution |
 |---|---|
 | [libxposed API](https://github.com/libxposed/api), [Vector](https://github.com/JingMatrix/Vector), [LSPatch](https://github.com/JingMatrix/LSPatch) | The hooking API, framework and deoptimization the module runs on, and rootless embedding. |
+| [DexKit](https://github.com/LuckyPray/DexKit) | Dex search used to find the ad row classes (LGPL-3.0-or-later). |
 | [ThreadsHideAds](https://github.com/MrxSiN/ThreadsHideAds), [TwitterHideAds](https://github.com/MrxSiN/TwitterHideAds) | The Brainfuck toolchain (source checker, optimizer, AOT C emitter, reference interpreter), runtime and conventions, adapted from TwitterHideAds `v3.0.0`. |
 
 ## Disclaimer

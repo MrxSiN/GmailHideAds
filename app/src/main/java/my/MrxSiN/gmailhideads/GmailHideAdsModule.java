@@ -8,9 +8,12 @@ import java.lang.reflect.Method;
 import java.util.List;
 import java.util.concurrent.atomic.AtomicBoolean;
 
+import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 
 import my.MrxSiN.gmailhideads.core.ModuleRuntime;
+import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
+import my.MrxSiN.gmailhideads.discover.AdRowDiscovery;
 import my.MrxSiN.gmailhideads.hook.AdTeaserLayer;
 import my.MrxSiN.gmailhideads.policy.GmailPolicy;
 
@@ -21,25 +24,30 @@ import my.MrxSiN.gmailhideads.policy.GmailPolicy;
  * the work to {@link AdTeaserLayer}; whether a package and process are in scope
  * and what counts as an advertisement are decided by the Brainfuck policy in
  * {@link GmailPolicy}, and how a row is suppressed is decided elsewhere.</p>
+ *
+ * <p>Hot reload ({@code autoHotReload} in module.prop): when a new build is
+ * installed, the running generation hands over the class loader and the
+ * application context ({@link #onHotReloading}); the new generation installs
+ * its hooks again under the same ids, so they replace the old ones in place,
+ * and takes the rest of the old hooks off ({@link #onHotReloaded}).</p>
  */
 public final class GmailHideAdsModule extends XposedModule {
 
     private static final String MODULE_VERSION = BuildConfig.VERSION_NAME;
     private static final String TARGET_PACKAGE = "com.google.android.gm";
 
-    private static final AtomicBoolean ATTACH_GUARD_INSTALLED = new AtomicBoolean(false);
-    private static final AtomicBoolean BOOTSTRAPPED = new AtomicBoolean(false);
+    private final AtomicBoolean attachGuardInstalled = new AtomicBoolean(false);
+    private final AtomicBoolean bootstrapped = new AtomicBoolean(false);
 
     private volatile String processName = "";
+    /** Gmail's class loader, once this generation is in scope. */
+    private volatile ClassLoader classLoader;
+    /** The application context, once Application.attach has run. */
+    private volatile Context context;
 
     @Override
     public void onModuleLoaded(ModuleLoadedParam param) {
-        ModuleRuntime.attach(this);
-        processName = param.getProcessName();
-        if (!GmailPolicy.load()) {
-            ModuleRuntime.log("Brainfuck policy core unavailable; fail-open mode active: "
-                    + GmailPolicy.failure());
-        }
+        start(param.getProcessName());
     }
 
     @Override
@@ -49,10 +57,10 @@ public final class GmailHideAdsModule extends XposedModule {
         if (!GmailPolicy.inScope(param.getPackageName(), processName)) {
             return;
         }
-        if (!ATTACH_GUARD_INSTALLED.compareAndSet(false, true)) {
+        if (!attachGuardInstalled.compareAndSet(false, true)) {
             return;
         }
-
+        classLoader = param.getClassLoader();
         ModuleRuntime.log("Gmail Hide Ads v" + MODULE_VERSION
                 + ": loading in " + processName
                 + ", framework=" + getFrameworkName()
@@ -60,7 +68,50 @@ public final class GmailHideAdsModule extends XposedModule {
                 + ", api=" + getApiVersion()
                 + ", policyCore=brainfuck-aot abi=" + GmailPolicy.abi());
 
-        installAttachGuard(param.getClassLoader());
+        installAttachGuard(classLoader);
+    }
+
+    @Override
+    public boolean onHotReloading(HotReloadingParam param) {
+        param.setSavedInstanceState(new Object[]{classLoader, context});
+        ModuleRuntime.log("Hot reloading from v" + MODULE_VERSION);
+        return true;
+    }
+
+    @Override
+    public void onHotReloaded(HotReloadedParam param) {
+        start(param.getProcessName());
+        Object saved = param.getSavedInstanceState();
+        if (saved instanceof Object[]) {
+            ClassLoader loader = (ClassLoader) ((Object[]) saved)[0];
+            Context attached = (Context) ((Object[]) saved)[1];
+            if (loader != null) {
+                classLoader = loader;
+                if (attached != null) {
+                    bootstrap(attached);
+                } else if (attachGuardInstalled.compareAndSet(false, true)) {
+                    installAttachGuard(loader);
+                }
+            }
+        }
+        int retired = 0;
+        for (XposedInterface.HookHandle handle : param.getOldHookHandles()) {
+            if (!ModuleRuntime.owns(handle.getId())) {
+                handle.unhook();
+                retired++;
+            }
+        }
+        ModuleRuntime.log("Hot reloaded to v" + MODULE_VERSION + "; "
+                + retired + " hook(s) of the previous generation taken off");
+    }
+
+    private void start(String process) {
+        ModuleRuntime.attach(this);
+        processName = process;
+        if (!GmailPolicy.load()) {
+            ModuleRuntime.log("Brainfuck policy core unavailable; fail-open mode active: "
+                    + GmailPolicy.failure());
+        }
     }
 
     /**
@@ -68,16 +119,19 @@ public final class GmailHideAdsModule extends XposedModule {
      * package callback, so that Gmail has supplied its real application context
      * before any layer is installed.
      */
-    private void installAttachGuard(ClassLoader classLoader) {
+    private void installAttachGuard(ClassLoader loader) {
         try {
             Class<?> applicationClass =
-                    Class.forName("android.app.Application", false, classLoader);
+                    Class.forName("android.app.Application", false, loader);
             Method attach = applicationClass.getDeclaredMethod("attach", Context.class);
 
-            ModuleRuntime.hook(attach, chain -> {
+            ModuleRuntime.hook(attach, "attach", chain -> {
                 List<Object> args = chain.getArgs();
                 Object result = chain.proceed();
-                bootstrap(args.isEmpty() ? null : args.get(0));
+                Object raw = args.isEmpty() ? null : args.get(0);
+                if (raw instanceof Context) {
+                    bootstrap((Context) raw);
+                }
                 return result;
             });
 
@@ -89,18 +143,28 @@ public final class GmailHideAdsModule extends XposedModule {
         }
     }
 
-    private void bootstrap(Object rawContext) {
-        if (!BOOTSTRAPPED.compareAndSet(false, true)) {
+    private void bootstrap(Context appContext) {
+        if (!bootstrapped.compareAndSet(false, true)) {
             return;
         }
-
-        Context appContext = rawContext instanceof Context ? (Context) rawContext : null;
+        context = appContext;
         ModuleRuntime.log("Host: " + describeHostVersion(appContext));
 
-        // A layer that fails is logged and skipped; Gmail keeps working.
+        // Discovery failing, or finding nothing hookable, falls back to the
+        // broad layer; a layer that fails is logged and skipped.
+        AdTeaserViewDetector detector = new AdTeaserViewDetector();
         try {
-            AdTeaserLayer.install();
-            ModuleRuntime.log("Layer installed: ad-teaser");
+            if (AdTeaserLayer.installInflate(AdRowDiscovery.find(appContext, detector), detector)) {
+                ModuleRuntime.log("Layer installed: ad-teaser inflate");
+                return;
+            }
+            ModuleRuntime.log("No hookable ad row class; using the addView fallback");
+        } catch (Throwable throwable) {
+            ModuleRuntime.log("DexKit discovery failed; using the addView fallback", throwable);
+        }
+        try {
+            AdTeaserLayer.installAddView(detector);
+            ModuleRuntime.log("Layer installed: ad-teaser addView");
         } catch (Throwable throwable) {
             ModuleRuntime.log("Layer failed, skipping: ad-teaser", throwable);
         }

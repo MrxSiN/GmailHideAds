@@ -2,6 +2,16 @@
 
 All notable changes to Gmail Hide Ads are documented here.
 
+## 2.1.0 - 2026-09-26
+
+- Find the ad row classes with DexKit at start-up: every class in `com.google.android.gm.ads` is listed once and judged by `row.bf`, the same program that judges a row at runtime. The bridge is closed before the first row is drawn, so DexKit never runs in steady state.
+- Hook only the ad rows: each class found declares its own `onFinishInflate`, which runs after the inflater gave the row its layout parameters and before the list measures it. The row is collapsed there and again whenever it is attached, because Gmail's bind sets the row's visibility after inflation. The global `ViewGroup.addView` hook and its deoptimization are now only the fallback, used when discovery finds nothing or a class cannot be hooked.
+- Cache the class names DexKit found in Gmail's preferences, keyed by the Gmail APK path and the module version code; a cold start reads them in about 2 ms instead of scanning Gmail's dex for about 300 ms. Cached names are judged by `row.bf` again.
+- Hot reload (`autoHotReload=true`): a new module build installed while Gmail runs replaces the running one without a restart. The old generation hands over Gmail's class loader and application context; the new one installs its hooks under the same ids, which replace the old ones in place, and takes the rest off.
+- Require libxposed API 102 (`minApiVersion=102`), which hook ids and hot reload need.
+- Add DexKit `2.2.0` (LGPL-3.0-or-later) as a dependency.
+- Increased Android `versionCode` from `3` to `4`.
+
 ## 2.0.0 - 2026-09-26
 
 - Move the decision policy into Brainfuck, compiled ahead of time to native code (`libgmailbf.so`): the ad row class rule (the `com.google.android.gm.ads.` prefix, the `AdTeaserItemView` suffix and the superclass walk) in `row.bf`, and the package and process scope rule in `scope.bf`. Hooks, reflection, the per-class cache and row collapsing stay in Java. See `docs/BRAINFUCK_ARCHITECTURE.md` and the normative specs in `docs/policy/`.

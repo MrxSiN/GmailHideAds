@@ -2,7 +2,7 @@ plugins {
     id("com.android.application")
 }
 
-val appVersion = "2.0.0"
+val appVersion = "2.1.0"
 
 val envKeystorePath = System.getenv("ANDROID_KEYSTORE_PATH")
 val envKeystoreAlias = System.getenv("ANDROID_KEYSTORE_ALIAS")
@@ -40,7 +40,7 @@ android {
         applicationId = "io.github.mrxsin.gmailhideads"
         minSdk = 26
         targetSdk = 36
-        versionCode = 3
+        versionCode = 4
         versionName = appVersion
         // Brainfuck request timing in the policy counters: debug builds, or -PpolicyTiming.
         buildConfigField("boolean", "POLICY_TIMING", project.hasProperty("policyTiming").toString())
@@ -119,6 +119,7 @@ androidComponents {
 }
 
 dependencies {
+    implementation("org.luckypray:dexkit:2.2.0")
     compileOnly("io.github.libxposed:api:102.0.0")
 
     testImplementation("junit:junit:4.13.2")

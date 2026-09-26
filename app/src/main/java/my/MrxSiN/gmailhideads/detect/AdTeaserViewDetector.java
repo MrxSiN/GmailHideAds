@@ -34,11 +34,10 @@ public final class AdTeaserViewDetector {
     private static final Map<Class<?>, Boolean> CACHE = new ConcurrentHashMap<>();
 
     public boolean isAd(View candidate) {
-        if (candidate == null) {
-            return false;
-        }
+        return candidate != null && isAdType(candidate.getClass());
+    }
 
-        Class<?> type = candidate.getClass();
+    public boolean isAdType(Class<?> type) {
         Boolean cached = CACHE.get(type);
         if (cached != null) {
             return cached;
