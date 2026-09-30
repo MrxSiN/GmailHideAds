@@ -37,10 +37,23 @@ jobs:
       - name: Set up Gradle cache
         uses: gradle/actions/setup-gradle@v4
 
-      - name: Generated Brainfuck output is up to date
+      # The normal path: bfcc, the Brainfuck compiler written in Brainfuck,
+      # built from the committed tools/bfcc/bfcc.generated.c. No Python.
+      - name: Build bfcc from the committed seed
+        run: sh tools/bfcc/build.sh build/bfcc/bfcc
+
+      - name: Generated Brainfuck output is up to date (bfcc gen --check)
+        run: build/bfcc/bfcc gen --check
+
+      # Python compiler -> stage 0 -> stage 1 -> stage 2 fixed point == the
+      # committed seed; stage 2 reproduces the policy programs.
+      - name: bfcc self-hosting chain
+        run: python3 tools/bfcc/selfhost.py
+
+      - name: The Python compiler (oracle) agrees
         run: python3 tools/bftool/gen.py --check
 
-      - name: Brainfuck toolchain and program tests (reference vs IR vs AOT, randomized, malformed frames)
+      - name: Brainfuck toolchain and program tests (reference vs Python compiler vs bfcc vs AOT, randomized, malformed frames)
         run: python3 -m unittest discover -s tests/compiler -v
 
       - name: Unit, parity and robustness tests (host build of libgmailbf)

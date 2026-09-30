@@ -104,21 +104,28 @@ verdict range (0 or 1). Anything else is a failure.
 ## Build pipeline (AOT)
 
 ```text
-brainfuck/src/*.bf ── lint.py (comments free of commands, @checkpoints, ~N runs, tape bounds)
+brainfuck/src/*.bf ── bfcc, the Brainfuck compiler written in Brainfuck (docs/BFCC.md):
+       │  lint (comments free of commands, @checkpoints, ~N runs, tape bounds)
        │  parse → IR → optimize: runs, clear/transfer/multiply loops, run-once
        │  loops, value and copy propagation, equality tests → if / C switch
        ▼
-app/src/main/cpp/generated/bf_programs.generated.c  (+ bf_abi.h, BfAbi.java, MEMORY_MAP.md)
+app/src/main/cpp/generated/bf_programs.generated.c  (+ MEMORY_MAP.md; bf_abi.h and
+       │                                              BfAbi.java copied from constants.txt)
        ▼
 NDK clang -O2 -flto, -fvisibility=hidden, -fstack-protector-strong, _FORTIFY_SOURCE=2,
 RELRO + BIND_NOW, non-executable stack, --gc-sections, --icf=all  ──►  libgmailbf.so
 ```
 
-Generated files are committed, so `./gradlew :app:assembleRelease` needs no
-Python. `python tools/bftool/gen.py --check` (Gradle `checkBrainfuck`, part of
-`check`, run by CI and before every host test build) fails when they are stale.
-Generation is deterministic (byte-identical output, LF line endings enforced by
-`.gitattributes`). The library exports only the two JNI entry points.
+bfcc is built from the committed `tools/bfcc/bfcc.generated.c` (bfcc compiled
+by itself) with the host C compiler, so generation needs no Python:
+`./gradlew :app:generateBrainfuck` or `tools/bfcc/build.sh && build/bfcc/bfcc
+gen`. `bfcc gen --check` (Gradle `checkBrainfuck`, part of `check`, run by CI
+and before every host test build) fails when the files are stale. The Python
+toolchain (`tools/bftool`) stays as the reference the tests compare against:
+bfcc's output is byte-identical to it. Generated files are committed, so
+`./gradlew :app:assembleRelease` needs neither. Generation is deterministic
+(byte-identical output, LF line endings enforced by `.gitattributes`). The
+library exports only the two JNI entry points.
 
 Program sizes: row 18 748 BF commands (237 IR ops), scope 18 192 (242 IR ops);
 the arm64 library is 10 KB. Every state machine compiles to one C `switch`.
@@ -177,6 +184,8 @@ current suite:
 | `PolicyParityTest` (old Java result = new Brainfuck result) | 634 229 comparisons, on the JVM and on the Pixel 8 Pro |
 | of which: every BMP char in six class-name contexts and three scope contexts | 589 824 |
 | `tests/compiler` (Python: reference interpreter vs IR vs AOT C, known vectors, random names, scope, malformed frames, truncations, budget) | about 46 000 requests, 13 tests |
+| `tests/compiler/test_bfcc.py` (bfcc vs the Python compiler: policies, `gen`, lint diagnostics, 3 000+ random programs, switches, errors; bfcc's C vs the reference interpreter) | 13 tests |
+| `tools/bfcc/selfhost.py` (CI): Python → stage 0 → stage 1 → stage 2 fixed point == committed seed | byte-identical |
 | `PolicyRobustnessTest`: random bytes to both programs, truncations, determinism | 20 000 + every prefix + 2 000 |
 | concurrency: 8 threads × 5 000 requests | 40 000 |
 
@@ -210,18 +219,22 @@ Every collapsed row is logged with the policy counters (`bfCalls`,
 2. Edit the `.bf` source. Keep the house idioms: named cells with `%cell`,
    a `@CELL` checkpoint after moves, `~N` after long runs, the equality test
    `copy s→f via t; f -= v; e = 1; f[ e[-] … f[-] ] e[ … e[-] ]` with `f` below
-   `t`, and every scratch cell back at zero. `python tools/bftool/lint.py
-   brainfuck/src/row.bf` verifies pointer positions statically.
+   `t`, and every scratch cell back at zero. `bfcc gen` checks pointer
+   positions statically before it compiles anything.
 3. New numbers go into `brainfuck/constants.txt` (append only; a layout change
    bumps `ABI_MAJOR`).
-4. `python tools/bftool/gen.py`, then `python -m unittest discover -s
-   tests/compiler` and `./gradlew testDebugUnitTest`.
+4. `./gradlew :app:generateBrainfuck` (or `build/bfcc/bfcc gen`), then
+   `python -m unittest discover -s tests/compiler` and `./gradlew
+   testDebugUnitTest`.
 5. A deliberate behaviour change must update the parity test to state the new
    rule; the legacy oracle itself is never edited.
 
 ## Changes from the TwitterHideAds toolchain
 
-- `gen.py`: output paths, `BfAbi` in the `policy` package.
+- `gen.py`: output paths, `BfAbi` in the `policy` package. Since bfcc it is
+  the reference implementation; the generated files name bfcc.
+- bfcc (`brainfuck/compiler`, `tools/bfcc`): the compiler of `ir.py`, `lint.py`
+  and the memory map of `gen.py`, rewritten in Brainfuck and self-hosting.
 - Runtime and JNI glue: renamed to `libgmailbf` and
   `my.MrxSiN.gmailhideads.policy.NativePolicy`; otherwise unchanged.
 - `PolicyFrame`: one name alphabet, no reference table and no re-entry frame,

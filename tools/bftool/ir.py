@@ -535,7 +535,7 @@ def emit_c(ops, name, tape_size):
     if static and (lo < 0 or hi >= tape_size):
         raise ValueError("%s addresses cells %d..%d outside tape %d" % (name, lo, hi, tape_size))
     lines = [
-        "/* Generated from %s.bf by tools/bftool. Do not edit. */" % name,
+        "/* Generated from %s.bf by bfcc. Do not edit. */" % name,
         "BF_PROGRAM(%s)" % name,
         "{",
         "    uint8_t *restrict p = t;",

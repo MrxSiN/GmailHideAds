@@ -229,9 +229,10 @@ decides what to do with what Java read, Brainfuck decides.**
 Each program is a `.bf` file in `brainfuck/src/` with a normative specification in
 [`docs/policy/`](docs/policy/). Comments may not contain a command character, `%cell` comments name
 tape cells, `@cell` checkpoints assert where the data pointer is, and `~N` asserts the length of a
-run; `tools/bftool/lint.py` checks all of them. The optimizer turns the programs into C (clear and
-transfer loops, value propagation, equality tests become `switch`), every loop charges an execution
-budget, and the NDK builds `libgmailbf.so`. The tape lives on the caller's stack, so concurrent
+run. The compiler checks all of them and turns the programs into C (clear and transfer loops, value
+propagation, equality tests become `switch`), every loop charges an execution budget, and the NDK
+builds `libgmailbf.so`. The compiler, bfcc, is itself written in Brainfuck and compiles itself; see
+[`docs/BFCC.md`](docs/BFCC.md). The tape lives on the caller's stack, so concurrent
 calls share nothing. Frame format, opcodes and memory semantics are in
 [`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md).
 
@@ -262,24 +263,27 @@ once per class. Full percentiles are in
 ## Build
 
 ```bash
-python tools/bftool/gen.py                      # check brainfuck/src, regenerate C, ABI and memory map
-python -m unittest discover -s tests/compiler   # optimizer, AOT and randomized program tests
+./gradlew :app:generateBrainfuck                # bfcc: check brainfuck/src, regenerate C, ABI and memory map
+python -m unittest discover -s tests/compiler   # optimizer, bfcc, AOT and randomized program tests
+python tools/bfcc/selfhost.py                   # bfcc's self-hosting chain
 ./gradlew :app:testDebugUnitTest                # JVM parity against the frozen 1.0.0 policy
 ./gradlew :app:assembleRelease
 ```
 
-The generated files are committed; the Gradle build checks them with `checkBrainfuck` and never
-edits them, so building the APK needs no Python. `scripts/check-project.sh` runs the static project
-checks.
+The generated files are committed; the Gradle build checks them with `checkBrainfuck` (bfcc, built
+from its committed C, no Python) and never edits them. `scripts/check-project.sh` runs the static
+project checks.
 
-You need JDK 17+, Android SDK 36 with NDK 28.2.13676358 and CMake 3.22.1, Python 3.10+, and for the
-JVM tests a host C compiler (MSVC Build Tools on Windows, gcc or clang elsewhere).
+You need JDK 17+, Android SDK 36 with NDK 28.2.13676358 and CMake 3.22.1, a host C compiler (MSVC
+Build Tools on Windows, gcc or clang elsewhere) for bfcc and the JVM tests, and Python 3.10+ for the
+tests.
 
 The release build is signed only when `ANDROID_KEYSTORE_PATH`, `ANDROID_KEYSTORE_ALIAS`,
 `ANDROID_KEYSTORE_PASSWORD` and `ANDROID_KEY_PASSWORD` are all set; otherwise it is produced
 unsigned. No credential is stored in this repository.
 
-CI checks the generated files and runs the Python and JVM tests, then builds the release APK and
+CI builds bfcc with `cc` and checks the generated files with it, runs bfcc's self-hosting chain
+and the Python and JVM tests, then builds the release APK and
 checks that every native library ships in it, on every push and pull request. A `v*` tag signs the
 APK, verifies its certificate and attaches it to the GitHub Release. Pull-request builds stay
 unsigned, because signing secrets are not exposed to pull-request code.
@@ -289,8 +293,10 @@ unsigned, because signing secrets are not exposed to pull-request code.
 ```
 brainfuck/src/      the two programs: every decision, word and limit
 brainfuck/          programs.json, constants.txt (ABI numbers), generated memory map
+brainfuck/compiler/ bfcc, the compiler, in Brainfuck (bfcc.bf) and in its source language
 docs/policy/        the normative specification of each program
-tools/bftool/       source checker, optimizer, C emitter, reference interpreter (tests only)
+tools/bfcc/         bfcc's host, its self-compiled C, the bootstrap chain
+tools/bftool/       the Python reference compiler and interpreter (tests and bootstrap only)
 app/src/main/cpp/   runtime, JNI glue and the generated C
 policy/             GmailPolicy, per-thread request encoding, response validation, counters
 GmailHideAdsModule  libxposed entry, scope check, bootstrap and hot reload

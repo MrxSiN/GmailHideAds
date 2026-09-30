@@ -1,0 +1,236 @@
+"""Numbers for the compiler.
+
+dec: a signed integer as 8 decimal digits, least significant first, in ten's
+complement (-50000000 .. 49999999). Offsets are decimal because the compiler
+prints them far more often than it adds them: printing is a digit walk and
++-1 is a carry chain of equality tests.
+
+ptr: a 32-bit little-endian memory-device address. Record pointers stay
+64-aligned, so stepping by one record is one add and a zero test.
+"""
+
+ptr = u8[4]
+dec = u8[8]
+
+
+class Span:
+    s: ptr
+    e: ptr
+
+
+# ---------------------------------------------------------------- ptr
+
+@inline
+def pinc(p: ptr):
+    p[0] += 1
+    if p[0] == 0:
+        p[1] += 1
+        if p[1] == 0:
+            p[2] += 1
+            if p[2] == 0:
+                p[3] += 1
+
+
+@inline
+def padd64(p: ptr):
+    """p += 64, p 64-aligned."""
+    p[0] += 64
+    if p[0] == 0:
+        p[1] += 1
+        if p[1] == 0:
+            p[2] += 1
+            if p[2] == 0:
+                p[3] += 1
+
+
+@inline
+def psub64(p: ptr):
+    """p -= 64, p 64-aligned."""
+    if p[0] == 0:
+        if p[1] == 0:
+            if p[2] == 0:
+                p[3] -= 1
+            p[2] -= 1
+        p[1] -= 1
+    p[0] -= 64
+
+
+@inline
+def peq(a: ptr, b: ptr) -> u8:
+    return a[0] == b[0] and a[1] == b[1] and a[2] == b[2] and a[3] == b[3]
+
+
+# ---------------------------------------------------------------- dec
+
+@inline
+def dinc(d: dec):
+    d[0] += 1
+    if d[0] == 10:
+        d[0] = 0
+        d[1] += 1
+        if d[1] == 10:
+            d[1] = 0
+            d[2] += 1
+            if d[2] == 10:
+                d[2] = 0
+                d[3] += 1
+                if d[3] == 10:
+                    d[3] = 0
+                    d[4] += 1
+                    if d[4] == 10:
+                        d[4] = 0
+                        d[5] += 1
+                        if d[5] == 10:
+                            d[5] = 0
+                            d[6] += 1
+                            if d[6] == 10:
+                                d[6] = 0
+                                d[7] += 1
+                                if d[7] == 10:
+                                    d[7] = 0
+
+
+@inline
+def ddec(d: dec):
+    if d[0] == 0:
+        d[0] = 9
+        if d[1] == 0:
+            d[1] = 9
+            if d[2] == 0:
+                d[2] = 9
+                if d[3] == 0:
+                    d[3] = 9
+                    if d[4] == 0:
+                        d[4] = 9
+                        if d[5] == 0:
+                            d[5] = 9
+                            if d[6] == 0:
+                                d[6] = 9
+                                if d[7] == 0:
+                                    d[7] = 9
+                                else:
+                                    d[7] -= 1
+                            else:
+                                d[6] -= 1
+                        else:
+                            d[5] -= 1
+                    else:
+                        d[4] -= 1
+                else:
+                    d[3] -= 1
+            else:
+                d[2] -= 1
+        else:
+            d[1] -= 1
+    else:
+        d[0] -= 1
+
+
+@inline
+def deq(a: dec, b: dec) -> u8:
+    return a[0] == b[0] and a[1] == b[1] and a[2] == b[2] and a[3] == b[3] and \
+        a[4] == b[4] and a[5] == b[5] and a[6] == b[6] and a[7] == b[7]
+
+
+@inline
+def dzero(d: dec) -> u8:
+    return d[0] == 0 and d[1] == 0 and d[2] == 0 and d[3] == 0 and \
+        d[4] == 0 and d[5] == 0 and d[6] == 0 and d[7] == 0
+
+
+@inline
+def dneg(d: dec) -> u8:
+    """1 when d < 0."""
+    r: u8 = 0
+    match d[7]:
+        case 5 | 6 | 7 | 8 | 9:
+            r = 1
+    return r
+
+
+@inline
+def bias(v: u8):
+    """(v + 5) mod 10: maps the sign digit so digit order is signed order."""
+    v += 5
+    match v:
+        case 10 | 11 | 12 | 13 | 14:
+            v -= 10
+
+
+def dadd(a: dec, b: dec) -> dec:
+    c: u8 = 0
+    for i in range(8):
+        a[i] += b[i]
+        a[i] += c
+        c = 0
+        match a[i]:
+            case 10 | 11 | 12 | 13 | 14 | 15 | 16 | 17 | 18 | 19:
+                c = 1
+        if c:
+            a[i] -= 10
+    return a
+
+
+def dsub(a: dec, b: dec) -> dec:
+    c: u8 = 0
+    for i in range(8):
+        a[i] -= b[i]
+        a[i] -= c
+        c = 0
+        match a[i]:
+            case 246 | 247 | 248 | 249 | 250 | 251 | 252 | 253 | 254 | 255:
+                c = 1
+        if c:
+            a[i] += 10
+    return a
+
+
+def dlt(a: dec, b: dec) -> u8:
+    """1 when a < b (signed)."""
+    bias(a[7])
+    bias(b[7])
+    r: u8 = 0
+    done: u8 = 0
+    for i in range(7, -1, -1):
+        if done == 0:
+            x: u8 = a[i] - b[i]
+            if x != 0:
+                done = 1
+                match x:
+                    case 247 | 248 | 249 | 250 | 251 | 252 | 253 | 254 | 255:
+                        r = 1
+    return r
+
+
+def put_dec(d: dec):
+    """Prints d like C's %d."""
+    if dneg(d):
+        putc(45)
+        for i in range(8):
+            d[i] = 9 - d[i]
+        dinc(d)
+    started: u8 = 0
+    for i in range(7, 0, -1):
+        if d[i] != 0:
+            started = 1
+        if started:
+            putc(d[i] + 48)
+    putc(d[0] + 48)
+
+
+def put_u8(v: u8):
+    """Prints v in decimal: one switch over the 256 values sets the digits."""
+    h: u8 = 0
+    t: u8 = 0
+    o: u8 = 0
+    for k in range(256):
+        if v == k:
+            h = k // 100
+            t = k // 10 % 10
+            o = k % 10
+    if h != 0:
+        putc(h + 48)
+        putc(t + 48)
+    elif t != 0:
+        putc(t + 48)
+    putc(o + 48)

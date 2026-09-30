@@ -1,0 +1,537 @@
+"""IR records, work lists, parsing and loop optimization.
+
+The same algorithm as tools/bftool/ir.py (parse, optimize, _optimize_loop,
+_peephole), organised as one streaming pass: a loop body is optimized the
+moment its `]` is read and joins its parent through the peephole, which is
+exactly the order in which ir.optimize visits it.
+
+A list of ops is a run of 64-byte records in device memory. Lists under
+construction live in the work area, nested bodies above their parents; a
+finished body moves to the arena.
+
+Offsets inside a loop body are counted in the enclosing coordinates, so a
+balanced loop needs no shifting (ir._shift); only a body that turns out
+unbalanced is rebased to its own start.
+
+Records are read into each function's own registers (locals), never into
+shared globals: a Brainfuck access costs the pointer's travel to the cell.
+"""
+
+
+class K:
+    ADD = 1
+    SET = 2
+    MUL = 3
+    MOV = 4
+    MOVE = 5
+    IN = 6
+    OUT = 7
+    LOOP = 8
+    ULOOP = 9
+    IF = 10
+    IFEQ = 11
+
+
+AR_BASE = 0x01000000    # arena: finished lists
+WK_BASE = 0x30000000    # work area: lists under construction
+FR_BASE = 0x38000000    # parser frames, one per open `[`
+SC_BASE = 0x39000000    # scratch: the multiply ops of one transfer loop
+
+
+class Op:
+    """kind; n: add/set value, mul/mov factor, ifeq value; base: mov base;
+    a: offset (mul/mov source, move amount); b: mul/mov destination;
+    p1..e1: body or ifeq then-list; p2..e2: ifeq else-list."""
+    kind: u8
+    n: u8
+    base: u8
+    a: dec
+    b: dec
+    p1: ptr
+    e1: ptr
+    p2: ptr
+    e2: ptr
+
+
+HEAD_SIZE = 19          # kind, n, base, a, b: the bytes most readers need
+
+
+class Head:
+    kind: u8
+    n: u8
+    base: u8
+    a: dec
+    b: dec
+
+
+class Frame:
+    start: ptr
+    open: dec
+    moved: u8
+    rebased: u8
+    pos: dec
+
+
+AR: ptr         # arena top
+WK: ptr         # work area top
+LST: ptr        # start of the list append() extends
+FRM: Frame
+FSP: ptr        # frame stack top
+FRB: ptr        # frame stack base
+TOP: Span       # the program's top-level list
+
+# Parser state of the innermost open list.
+cur: dec        # pointer offset (Brainfuck `<` `>` so far, uncommitted)
+pos: dec        # index of the next command, for diagnostics
+F_open: dec     # cur where this loop's `[` was read (parent coordinates)
+F_moved: u8     # an unbalanced loop moved the pointer inside this list
+F_rebased: u8   # offsets count from this loop's start, not the parent's
+F_pos: dec      # index of this loop's `[`
+acc: u8         # pending `+`/`-` sum at cur
+held: u8        # the command scan() stopped at
+
+
+# ---------------------------------------------------------------- lists
+
+@inline
+def load_op(r: Op, p: ptr):
+    """The record at p: its head, and its body pointers when it has any."""
+    load(r, p, 0, HEAD_SIZE)
+    match r.kind:
+        case K.LOOP | K.IF | K.IFEQ | K.ULOOP:
+            load(r, p, HEAD_SIZE, 35)
+
+
+@inline
+def push_head(op: Op):
+    """Appends an op without bodies (only its head is written)."""
+    store(op, WK, 0, HEAD_SIZE)
+    padd64(WK)
+
+
+@inline
+def push(op: Op):
+    """Appends op to the work list unchanged."""
+    store(op, WK)
+    padd64(WK)
+
+
+@inline
+def put(op: Op):
+    """Appends op to the work list through the peephole."""
+    store(op, WK)
+    append()
+
+
+def append():
+    """Commits the op stored at WK to the work list [LST, WK) through
+    ir._peephole's rules: add after add or set on the same cell merges (an
+    add that reaches zero disappears), set after add or set on the same cell
+    replaces it; an add of zero is dropped."""
+    h: Head
+    nw: Head
+    p: ptr = WK
+    q: ptr
+    load(nw, p)
+    padd64(p)
+    if not peq(WK, LST):
+        q = WK
+        psub64(q)
+        load(h, q)
+        if deq(h.a, nw.a):
+            if nw.kind == K.ADD:
+                if h.kind == K.ADD:
+                    h.n += nw.n
+                    if h.n == 0:
+                        WK = q
+                        return
+                    pinc(q)
+                    store8(q, h.n)
+                    return
+                if h.kind == K.SET:
+                    h.n += nw.n
+                    pinc(q)
+                    store8(q, h.n)
+                    return
+            if nw.kind == K.SET:
+                if h.kind == K.ADD or h.kind == K.SET:
+                    mcopy(WK, p, q)
+                    return
+    if nw.kind == K.ADD and nw.n == 0:
+        return
+    WK = p
+
+
+def finalize(s: ptr) -> Span:
+    """Moves the work list [s, WK) to the arena; WK drops back to s."""
+    r: Span
+    r.s = AR
+    mcopy(s, WK, AR)
+    p: ptr = s
+    while not peq(p, WK):
+        padd64(p)
+        padd64(AR)
+    r.e = AR
+    WK = s
+    return r
+
+
+def writes(s: ptr, e: ptr, cell: dec) -> u8:
+    """ir._writes: may the list write `cell`. Scans without leaving the
+    loop until a record has a body to search."""
+    p: ptr = s
+    r: Op
+    x: u8 = 0
+    ev: u8 = 0
+    q3: ptr
+    q4: ptr
+    while True:
+        ev = 0
+        while ev == 0:
+            if peq(p, e):
+                ev = 3
+            else:
+                load(r, p, 0, HEAD_SIZE)
+                match r.kind:
+                    case K.ADD | K.SET | K.IN:
+                        if deq(r.a, cell):
+                            ev = 1
+                    case K.MUL | K.MOV:
+                        if deq(r.b, cell):
+                            ev = 1
+                    case K.ULOOP | K.MOVE:
+                        ev = 1
+                    case K.LOOP | K.IF | K.IFEQ:
+                        ev = 2
+                if ev == 0:
+                    padd64(p)
+        if ev == 1:
+            return 1
+        if ev == 3:
+            return 0
+        load(r, p, HEAD_SIZE, 35)
+        q3 = r.p2
+        q4 = r.e2
+        x = writes(r.p1, r.e1, cell)
+        if x:
+            return 1
+        if r.kind == K.IFEQ:
+            x = writes(q3, q4, cell)
+            if x:
+                return 1
+        padd64(p)
+
+
+def shift(s: ptr, e: ptr, d: dec):
+    """Offsets of a (static) list and its bodies -= d."""
+    p: ptr = s
+    r: Op
+    while not peq(p, e):
+        load_op(r, p)
+        r.a = dsub(r.a, d)
+        if r.kind == K.MUL:
+            r.b = dsub(r.b, d)
+        store(r, p)
+        if r.kind == K.LOOP or r.kind == K.IF:
+            shift(r.p1, r.e1, d)
+        padd64(p)
+
+
+# ---------------------------------------------------------------- diagnostics
+
+def diag_dec(d: dec):
+    if dneg(d):
+        diagc(45)
+        for i in range(8):
+            d[i] = 9 - d[i]
+        dinc(d)
+    started: u8 = 0
+    for i in range(7, 0, -1):
+        if d[i] != 0:
+            started = 1
+        if started:
+            diagc(d[i] + 48)
+    diagc(d[0] + 48)
+
+
+# ---------------------------------------------------------------- parsing
+
+def scan():
+    """Reads commands while they only update counters (+ - and moves with
+    no pending add) and skips everything else; stops at the first command
+    that needs more, or the end (held = 0)."""
+    go: u8 = 1
+    c: u8 = 0
+    while go:
+        c = getc()
+        match c:
+            case 43:
+                acc += 1
+                dinc(pos)
+            case 45:
+                acc -= 1
+                dinc(pos)
+            case 62:
+                if acc == 0:
+                    dinc(cur)
+                    dinc(pos)
+                else:
+                    held = c
+                    go = 0
+            case 60:
+                if acc == 0:
+                    ddec(cur)
+                    dinc(pos)
+                else:
+                    held = c
+                    go = 0
+            case 0 | 44 | 46 | 91 | 93:
+                held = c
+                go = 0
+
+
+def flush():
+    """The pending run of + and - becomes one add at cur. Folding a run
+    before the peephole sees it gives the same list as adding one command
+    at a time (the peephole's merges are associative)."""
+    nw: Op
+    if acc != 0:
+        nw.kind = K.ADD
+        nw.n = acc
+        nw.a = cur
+        put(nw)
+        acc = 0
+
+
+@inline
+def push_frame():
+    FRM.start = LST
+    FRM.open = F_open
+    FRM.moved = F_moved
+    FRM.rebased = F_rebased
+    FRM.pos = F_pos
+    store(FRM, FSP)
+    padd64(FSP)
+
+
+@inline
+def pop_frame():
+    psub64(FSP)
+    load(FRM, FSP)
+    LST = FRM.start
+    F_open = FRM.open
+    F_moved = FRM.moved
+    F_rebased = FRM.rebased
+    F_pos = FRM.pos
+
+
+def open_loop():
+    push_frame()
+    LST = WK
+    F_open = cur
+    F_moved = 0
+    F_rebased = 0
+    F_pos = pos
+
+
+def close_loop():
+    if peq(FSP, FRB):
+        diag("unmatched ] at ")
+        diag_dec(pos)
+        diag("\n")
+        halt(1)
+    if F_moved == 0 and deq(cur, F_open):
+        close_balanced()
+    else:
+        close_unbalanced()
+
+
+def close_balanced():
+    """ir._optimize_loop on the body [LST, WK) of a loop at F_open."""
+    off: dec = F_open
+    alladd: u8 = 1
+    cond: u8 = 0
+    others: u8 = 0
+    kind: u8 = K.LOOP
+    w: u8 = 0
+    p: ptr = LST
+    sp: Span
+    h: Head
+    nw: Op
+    if peq(LST, WK):
+        alladd = 0
+    while not peq(p, WK):
+        load(h, p)
+        if h.kind != K.ADD:
+            alladd = 0
+        elif deq(h.a, off):
+            cond += h.n
+        else:
+            others = 1
+        padd64(p)
+    if alladd:
+        if cond == 1 and others == 0:
+            # Clear loop.
+            WK = LST
+            pop_frame()
+            nw.kind = K.SET
+            nw.n = 0
+            nw.a = off
+            put(nw)
+            return
+        if cond == 255:
+            transfer(off)
+            return
+    if not peq(LST, WK):
+        # Run-once loop: the body ends by clearing the condition cell.
+        p = WK
+        psub64(p)
+        load(h, p)
+        if h.kind == K.SET and h.n == 0 and deq(h.a, off):
+            w = writes(LST, p, off)
+            if w == 0:
+                kind = K.IF
+    sp = finalize(LST)
+    pop_frame()
+    nw.kind = kind
+    nw.a = off
+    nw.p1 = sp.s
+    nw.e1 = sp.e
+    put(nw)
+
+
+def transfer(off: dec):
+    """A body of adds that decrements its condition cell: one multiply-add
+    per other cell, in offset order, then clear the condition cell."""
+    sc: ptr = le(SC_BASE)
+    last: dec = dec10(0)
+    have: u8 = 0
+    found: u8 = 0
+    ok: u8 = 0
+    k: u8 = 0
+    mn: dec = dec10(0)
+    p: ptr
+    h: Head
+    nw: Op
+    while True:
+        found = 0
+        p = LST
+        while not peq(p, WK):
+            load(h, p)
+            if not deq(h.a, off):
+                ok = 1
+                if have:
+                    ok = dlt(last, h.a)
+                if ok and found:
+                    ok = dlt(h.a, mn)
+                if ok:
+                    mn = h.a
+                    found = 1
+            padd64(p)
+        if found == 0:
+            break
+        k = 0
+        p = LST
+        while not peq(p, WK):
+            load(h, p)
+            if deq(h.a, mn):
+                k += h.n
+            padd64(p)
+        if k != 0:
+            nw.kind = K.MUL
+            nw.a = off
+            nw.b = mn
+            nw.n = k
+            store(nw, sc)
+            padd64(sc)
+        last = mn
+        have = 1
+    WK = LST
+    pop_frame()
+    p = le(SC_BASE)
+    while not peq(p, sc):
+        load(nw, p)
+        put(nw)
+        padd64(p)
+    nw.kind = K.SET
+    nw.n = 0
+    nw.a = off
+    put(nw)
+
+
+def close_unbalanced():
+    """ir._parse_seq's unbalanced case: the body, rebased to the loop's
+    start and ending with its net move, becomes a `uloop`; the parent
+    commits its pending move first."""
+    orig: dec = F_open
+    sp: Span
+    nw: Op
+    if F_rebased == 0:
+        shift(LST, WK, F_open)
+        cur = dsub(cur, F_open)
+        F_rebased = 1
+    if not dzero(cur):
+        nw.kind = K.MOVE
+        nw.a = cur
+        put(nw)
+    sp = finalize(LST)
+    pop_frame()
+    cur = orig
+    if F_rebased == 0:
+        shift(LST, WK, F_open)
+        cur = dsub(cur, F_open)
+        F_rebased = 1
+    if not dzero(cur):
+        nw.kind = K.MOVE
+        nw.a = cur
+        put(nw)
+        cur = dec10(0)
+    nw.kind = K.ULOOP
+    nw.p1 = sp.s
+    nw.e1 = sp.e
+    put(nw)
+    F_moved = 1
+
+
+def parse():
+    """Reads the source through GETC up to its NUL and leaves the optimized
+    top-level list in TOP (ir.parse + ir.optimize)."""
+    nw: Op
+    LST = WK
+    FSP = FRB
+    cur = dec10(0)
+    pos = dec10(0)
+    F_open = dec10(0)
+    F_moved = 0
+    F_rebased = 1
+    F_pos = dec10(0)
+    acc = 0
+    while True:
+        scan()
+        flush()
+        match held:
+            case 0:
+                break
+            case 62:
+                dinc(cur)
+            case 60:
+                ddec(cur)
+            case 46:
+                nw.kind = K.OUT
+                nw.a = cur
+                put(nw)
+            case 44:
+                nw.kind = K.IN
+                nw.a = cur
+                put(nw)
+            case 91:
+                open_loop()
+            case 93:
+                close_loop()
+        dinc(pos)
+    if not peq(FSP, FRB):
+        diag("unmatched [ at ")
+        diag_dec(F_pos)
+        diag("\n")
+        halt(1)
+    TOP = finalize(LST)

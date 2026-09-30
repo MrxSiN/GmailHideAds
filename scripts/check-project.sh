@@ -4,7 +4,7 @@
 # the mistakes a compiler cannot catch: a missing Xposed descriptor, a legacy
 # API creeping back in, a hard-coded credential, or a version that no longer
 # agrees with itself. Policy behaviour is covered by the tests; generated-file
-# staleness by `python3 tools/bftool/gen.py --check`.
+# staleness by `bfcc gen --check`.
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -40,6 +40,10 @@ for file in \
   "$ROOT/brainfuck/src/row.bf" \
   "$ROOT/brainfuck/src/scope.bf" \
   "$ROOT/app/src/main/cpp/generated/bf_programs.generated.c" \
+  "$ROOT/brainfuck/compiler/bfcc.bf" \
+  "$ROOT/tools/bfcc/bfcc.generated.c" \
+  "$ROOT/tools/bfcc/bfcc_host.c" \
+  "$ROOT/tools/bfcc/bfcc_main.c" \
   "$ROOT/docs/policy/row.md" \
   "$ROOT/docs/policy/scope.md" ; do
   test -f "$file" || fail "missing $file"
@@ -101,7 +105,10 @@ grep -q 'ModuleRuntime.deoptimize' "$LAYER" \
 # --- the Brainfuck core is built, tested and shipped ------------------------
 grep -q 'path = file("src/main/cpp/CMakeLists.txt")' "$APP_GRADLE" \
   || fail "the native policy library is not built"
-grep -q 'gen.py --check' "$WORKFLOW" || fail "CI must reject stale generated Brainfuck output"
+grep -q 'bfcc gen --check' "$WORKFLOW" || fail "CI must reject stale generated Brainfuck output"
+grep -q 'tools/bfcc/selfhost.py' "$WORKFLOW" || fail "CI must check the bfcc self-hosting chain"
+grep -q 'bfccExe.absolutePath, "gen", "--check"' "$APP_GRADLE" \
+  || fail "checkBrainfuck must run bfcc, not Python"
 grep -q 'unittest discover' "$WORKFLOW" || fail "CI must run the Brainfuck toolchain tests"
 grep -q 'testDebugUnitTest' "$WORKFLOW" || fail "CI must run the parity tests"
 grep -q 'libgmailbf.so' "$WORKFLOW" || fail "CI must check that the native library ships"

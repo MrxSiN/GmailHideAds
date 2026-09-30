@@ -1,0 +1,783 @@
+"""Source checking for the house style of brainfuck/src/*.bf (the rules of
+tools/bftool/lint.py): `#` comments free of commands, `%cell NAME ADDRESS
+[SIZE]` declarations, `@NAME`, `@NAME:K`, `@ADDRESS` checkpoints, `~N` run
+assertions, tape bounds and loops that leave the pointer where they found
+it. It also extracts the commands for the parser and records what the
+memory map needs.
+
+The source is read twice from device memory (declarations first, so a
+checkpoint may name a cell declared later). Every error is reported, in
+lint.py's order and wording, before the program is rejected.
+
+Each pass is a tight loop over characters that stops only for an event
+(a declaration to record, an error to report, a checkpoint to look up);
+the character that raised it is handed back and read again afterwards.
+
+Lines break at LF, CR, CR LF, VT, FF and 0x1C-0x1E and whitespace is ASCII
+whitespace: what str.splitlines and str.isspace do on ASCII text.
+"""
+
+SRC_BASE = 0x20000000   # source text
+CMD_BASE = 0x21000000   # extracted commands
+SYM_BASE = 0x22000000   # cell table: 48-byte name, address, size
+NAMEBUF = 0x23000000    # the name being read, NUL padded
+STK_BASE = 0x23010000   # open loops: cell, line
+ZERO48 = 0x23020000     # 48 zero bytes, never written
+BUCKETS = 0x24000000    # first cell entry per name hash (per program)
+NEXT_TOP = 0x25         # entry chains: the entry's address with this top byte
+
+SRC: ptr
+SYME: ptr
+CMDP: ptr
+PATHP: ptr      # the source path, for messages
+NCMD: dec       # commands extracted
+HIGH: dec       # highest cell the pointer reaches
+LBAD: u8        # an error was reported
+LINE: dec
+PB: u8          # lookahead after a lone CR
+PBV: u8
+RB: u8          # a character handed back to be read again
+RBV: u8
+NH: u8          # hash of the name in NAMEBUF (byte sum)
+GEN: u8         # program number: fresh hash buckets per program
+
+
+class Sym:
+    name: u8[48]
+    addr: dec
+    size: dec
+
+
+class Open:
+    cell: dec
+    line: dec
+
+
+@inline
+def is_ws(c: u8) -> u8:
+    r: u8 = 0
+    match c:
+        case 9 | 32 | 31:
+            r = 1
+    return r
+
+
+@inline
+def is_digit(c: u8) -> u8:
+    r: u8 = 0
+    match c:
+        case 48 | 49 | 50 | 51 | 52 | 53 | 54 | 55 | 56 | 57:
+            r = 1
+    return r
+
+
+@inline
+def name_class(c: u8) -> u8:
+    """2: letter or _, 1: digit, 0: other."""
+    r: u8 = 0
+    for k in range(65, 91):
+        if c == k:
+            r = 2
+    for k in range(97, 123):
+        if c == k:
+            r = 2
+    if c == 95:
+        r = 2
+    for k in range(48, 58):
+        if c == k:
+            r = 1
+    return r
+
+
+@inline
+def is_break(c: u8) -> u8:
+    r: u8 = 0
+    match c:
+        case 0 | 10 | 13 | 11 | 12 | 28 | 29 | 30:
+            r = 1
+    return r
+
+
+@inline
+def shift_digit(d: dec, c: u8):
+    for i in range(7, 0, -1):
+        d[i] = d[i - 1]
+    d[0] = c - 48
+
+
+@inline
+def nextc(c: u8):
+    """c = the next source character. A CR LF pair reads as one CR; a
+    character handed back reads exactly as it did."""
+    if RBV:
+        c = RB
+        RBV = 0
+    else:
+        if PBV:
+            c = PB
+            PBV = 0
+        else:
+            c = getc()
+        if c == 13:
+            PB = getc()
+            if PB != 10:
+                PBV = 1
+
+
+@inline
+def again(c: u8):
+    RB = c
+    RBV = 1
+
+
+@inline
+def name_start(c: u8):
+    z: ptr = le(ZERO48)
+    e: ptr = le(ZERO48 + 48)
+    nb: ptr = le(NAMEBUF)
+    mcopy(z, e, nb)
+    store8(nb, c)
+    NH = c
+
+
+@inline
+def name_add(c: u8, n: u8):
+    nb: ptr = le(NAMEBUF)
+    nb[0] += n
+    store8(nb, c)
+    NH += c
+
+
+@inline
+def bucket(b: ptr):
+    """The address of NAMEBUF's hash bucket."""
+    b = le(BUCKETS)
+    b[1] = NH
+    b[2] = GEN
+
+
+def diag_str(p: ptr):
+    c: u8 = 0
+    load(c, p)
+    while c != 0:
+        diagc(c)
+        pinc(p)
+        load(c, p)
+
+
+def err_head():
+    """`path:line: `"""
+    diag_str(PATHP)
+    diagc(58)
+    diag_dec(LINE)
+    diag(": ")
+    LBAD = 1
+
+
+def name_too_long():
+    err_head()
+    diag("bfcc: cell names are limited to 47 characters\n")
+    halt(1)
+
+
+def lookup() -> ptr:
+    """The cell table entry named like NAMEBUF, or SYME: a walk along the
+    chain of its hash bucket."""
+    p: ptr
+    b: ptr
+    e: ptr
+    nb: ptr = le(NAMEBUF)
+    zero: ptr = le(0)
+    x: ptr
+    go: u8 = 1
+    bucket(b)
+    load(p, b)
+    while go:
+        if peq(p, zero):
+            p = SYME
+            go = 0
+        else:
+            e = p
+            e[0] += 48
+            mdiff(p, e, nb, x)
+            if peq(x, e):
+                go = 0
+            else:
+                e[0] -= 48
+                e[3] = NEXT_TOP
+                load(p, e)
+    return p
+
+
+def declare_cell(addr: dec, size: dec):
+    p: ptr
+    s: Sym
+    nb: ptr = le(NAMEBUF)
+    b: ptr
+    n: ptr
+    head: ptr
+    p = lookup()
+    if peq(p, SYME):
+        # A new entry heads its bucket's chain.
+        bucket(b)
+        load(head, b)
+        n = p
+        n[3] = NEXT_TOP
+        store(head, n)
+        store(p, b)
+        padd64(SYME)
+    else:
+        err_head()
+        diag("cell ")
+        diag_str(nb)
+        diag(" declared twice\n")
+    # A redeclaration keeps its first place and takes the new value.
+    load(s.name, nb)
+    s.addr = addr
+    s.size = size
+    store(s, p)
+
+
+def pass_decls():
+    """First pass: `%cell` declarations in comments (DECL.finditer)."""
+    c: u8 = 0
+    st: u8 = 0          # progress through `%cell NAME ADDR [SIZE]`
+    incom: u8 = 0
+    cls: u8 = 0
+    ws: u8 = 0
+    nlen: u8 = 0
+    fin: u8 = 0
+    ev: u8 = 0
+    addr: dec
+    size: dec
+    source(SRC)
+    PBV = 0
+    RBV = 0
+    LINE = dec10(1)
+    while True:
+        ev = 0
+        while ev == 0:
+            nextc(c)
+            fin = 0
+            if is_break(c):
+                # A declaration still open at the end of the line is complete.
+                if st == 9 or st == 10:
+                    fin = 1
+                if st == 11:
+                    fin = 2
+            elif incom == 0:
+                if c == 35:
+                    incom = 1
+            else:
+                ws = is_ws(c)
+                match st:
+                    case 1:
+                        st = 0
+                        if c == 99:
+                            st = 2
+                    case 2:
+                        st = 0
+                        if c == 101:
+                            st = 3
+                    case 3:
+                        st = 0
+                        if c == 108:
+                            st = 4
+                    case 4:
+                        st = 0
+                        if c == 108:
+                            st = 5
+                    case 5:
+                        st = 0
+                        if ws:
+                            st = 6
+                    case 6:
+                        if ws == 0:
+                            st = 0
+                            cls = name_class(c)
+                            if cls == 2:
+                                name_start(c)
+                                nlen = 1
+                                st = 7
+                    case 7:
+                        cls = name_class(c)
+                        if cls != 0:
+                            if nlen == 47:
+                                ev = 2
+                            else:
+                                name_add(c, nlen)
+                                nlen += 1
+                        elif ws:
+                            st = 8
+                        else:
+                            st = 0
+                    case 8:
+                        if ws == 0:
+                            st = 0
+                            if is_digit(c):
+                                addr = dec10(0)
+                                shift_digit(addr, c)
+                                st = 9
+                    case 9:
+                        if is_digit(c):
+                            shift_digit(addr, c)
+                        elif ws:
+                            st = 10
+                        else:
+                            fin = 1
+                    case 10:
+                        if is_digit(c):
+                            size = dec10(0)
+                            shift_digit(size, c)
+                            st = 11
+                        elif ws == 0:
+                            fin = 1
+                    case 11:
+                        if is_digit(c):
+                            shift_digit(size, c)
+                        else:
+                            fin = 2
+            if fin:
+                if fin == 1:
+                    size = dec10(1)
+                st = 0
+                ev = 1
+            if is_break(c):
+                if ev == 1:
+                    # Record the declaration on its own line first.
+                    again(c)
+                else:
+                    incom = 0
+                    st = 0
+                    if c == 0:
+                        ev = 3
+                    else:
+                        dinc(LINE)
+            elif st == 0 and incom == 1 and c == 37:
+                st = 1
+        match ev:
+            case 1:
+                declare_cell(addr, size)
+            case 2:
+                name_too_long()
+            case 3:
+                break
+
+
+# ---------------------------------------------------------------- pass 2
+
+PPOS: dec           # pointer position
+OVER: u8            # PPOS >= tape
+RUNC: u8            # command of the current run, 0 for none
+RUNN: dec
+NUM: dec            # number read after ~ or @
+OFF: dec            # checkpoint byte offset
+HASOFF: u8
+ISNUM: u8
+SP2: ptr            # open loop stack top
+STKB: ptr
+UC: u8              # an unexpected character
+OPEN: Open          # the loop a `]` closed
+
+
+def run_error():
+    err_head()
+    diag("run of ")
+    diag_dec(RUNN)
+    diagc(32)
+    if RUNC == 0:
+        diag("commands")
+    else:
+        diagc(RUNC)
+    diag(", assertion ~")
+    diag_dec(NUM)
+    diagc(10)
+
+
+def run_check():
+    """`~N` read into NUM: the run just before it must be exactly N long."""
+    if not deq(NUM, RUNN):
+        run_error()
+    RUNC = 0
+    RUNN = dec10(0)
+
+
+def checkpoint():
+    """`@target[:k]` read (name in NAMEBUF or number in NUM)."""
+    expected: dec
+    p: ptr
+    s: Sym
+    x: u8 = 0
+    nb: ptr = le(NAMEBUF)
+    if ISNUM:
+        expected = dadd(NUM, OFF)
+    else:
+        p = lookup()
+        if peq(p, SYME):
+            err_head()
+            diag("unknown cell ")
+            diag_str(nb)
+            diagc(10)
+            expected = PPOS
+        else:
+            load(s, p)
+            x = dlt(OFF, s.size)
+            if x == 0:
+                err_head()
+                diag_str(nb)
+                diag(" has no byte ")
+                diag_dec(OFF)
+                diagc(10)
+            expected = dadd(s.addr, OFF)
+    if not deq(expected, PPOS):
+        err_head()
+        diag("pointer is at cell ")
+        diag_dec(PPOS)
+        diag(", checkpoint @")
+        if ISNUM:
+            diag_dec(NUM)
+        else:
+            diag_str(nb)
+        if HASOFF:
+            diagc(58)
+            diag_dec(OFF)
+        diag(" expects ")
+        diag_dec(expected)
+        diagc(10)
+    RUNC = 0
+    RUNN = dec10(0)
+
+
+def unexpected(c: u8):
+    """`unexpected character %r outside a comment`; a UTF-8 sequence is one
+    character."""
+    x: u8 = 0
+    err_head()
+    diag("unexpected character ")
+    if c == 39:
+        diag("\"'\"")
+    elif c == 92:
+        diag("'\\\\'")
+    else:
+        for k in range(0, 32):
+            if c == k:
+                diag("'\\x%02x'" % k)
+                x = 1
+        if c == 127:
+            diag("'\\x7f'")
+            x = 1
+        if x == 0:
+            diagc(39)
+            diagc(c)
+            # Continuation bytes of a UTF-8 character.
+            x = 1
+            while x:
+                nextc(UC)
+                x = 0
+                for k in range(128, 192):
+                    if UC == k:
+                        x = 1
+                if x:
+                    diagc(UC)
+                else:
+                    again(UC)
+            diagc(39)
+    diag(" outside a comment\n")
+
+
+def end_pending(st: u8):
+    """The line ends while `~` or `@` is being read."""
+    match st:
+        case 1:
+            err_head()
+            diag("malformed run assertion\n")
+        case 2:
+            run_check()
+        case 3:
+            err_head()
+            diag("malformed checkpoint\n")
+        case 4 | 5 | 7:
+            checkpoint()
+        case 6:
+            HASOFF = 0
+            checkpoint()
+            unexpected(58)
+
+
+def comment_check(bad: u8[8]):
+    """`command characters in a comment: ...` (sorted: + , - . < > [ ])."""
+    err_head()
+    diag("command characters in a comment:")
+    for k in range(8):
+        if bad[k]:
+            diagc(32)
+            diagc(ord("+,-.<>[]"[k]))
+    diagc(10)
+
+
+def pass_code():
+    """Second pass: checks the code and extracts the commands to CMD_BASE."""
+    c: u8 = 0
+    st: u8 = 0          # 1 `~`, 2 its digits, 3 `@`, 4 name, 5 number, 6 `:`, 7 offset
+    incom: u8 = 0
+    anybad: u8 = 0
+    cls: u8 = 0
+    nlen: u8 = 0
+    ev: u8 = 0
+    hi: u8 = 0
+    bad: u8[8]
+    x: u8 = 0
+    source(SRC)
+    PBV = 0
+    RBV = 0
+    LINE = dec10(1)
+    PPOS = dec10(0)
+    HIGH = dec10(0)
+    NCMD = dec10(0)
+    OVER = 0
+    RUNC = 0
+    RUNN = dec10(0)
+    CMDP = le(CMD_BASE)
+    STKB = le(STK_BASE)
+    SP2 = STKB
+    for k in range(8):
+        bad[k] = 0
+    while True:
+        ev = 0
+        while ev == 0:
+            nextc(c)
+            if is_break(c):
+                if st != 0:
+                    ev = 2
+                    again(c)
+                elif anybad:
+                    ev = 3
+                    again(c)
+                else:
+                    incom = 0
+                    RUNC = 0
+                    RUNN = dec10(0)
+                    if c == 0:
+                        ev = 1
+                    else:
+                        dinc(LINE)
+            elif incom:
+                match c:
+                    case 43:
+                        bad[0] = 1
+                        anybad = 1
+                    case 44:
+                        bad[1] = 1
+                        anybad = 1
+                    case 45:
+                        bad[2] = 1
+                        anybad = 1
+                    case 46:
+                        bad[3] = 1
+                        anybad = 1
+                    case 60:
+                        bad[4] = 1
+                        anybad = 1
+                    case 62:
+                        bad[5] = 1
+                        anybad = 1
+                    case 91:
+                        bad[6] = 1
+                        anybad = 1
+                    case 93:
+                        bad[7] = 1
+                        anybad = 1
+            elif st != 0:
+                # `~N` or `@target[:k]` in progress: consume c, or end the
+                # assertion and read c again as ordinary code.
+                match st:
+                    case 1:
+                        if is_digit(c):
+                            NUM = dec10(0)
+                            shift_digit(NUM, c)
+                            st = 2
+                        else:
+                            ev = 6
+                    case 2:
+                        if is_digit(c):
+                            shift_digit(NUM, c)
+                        elif deq(NUM, RUNN):
+                            RUNC = 0
+                            RUNN = dec10(0)
+                            st = 0
+                            again(c)
+                        else:
+                            ev = 4
+                    case 3:
+                        cls = name_class(c)
+                        HASOFF = 0
+                        OFF = dec10(0)
+                        if cls == 2:
+                            ISNUM = 0
+                            name_start(c)
+                            nlen = 1
+                            st = 4
+                        elif cls == 1:
+                            ISNUM = 1
+                            NUM = dec10(0)
+                            shift_digit(NUM, c)
+                            st = 5
+                        else:
+                            ev = 7
+                    case 4:
+                        cls = name_class(c)
+                        if cls != 0:
+                            if nlen == 47:
+                                ev = 14
+                            else:
+                                name_add(c, nlen)
+                                nlen += 1
+                        elif c == 58:
+                            st = 6
+                        else:
+                            ev = 5
+                    case 5:
+                        if is_digit(c):
+                            shift_digit(NUM, c)
+                        elif c == 58:
+                            st = 6
+                        else:
+                            ev = 5
+                    case 6:
+                        if is_digit(c):
+                            HASOFF = 1
+                            shift_digit(OFF, c)
+                            st = 7
+                        else:
+                            ev = 9
+                    case 7:
+                        if is_digit(c):
+                            shift_digit(OFF, c)
+                        else:
+                            ev = 5
+                if ev != 0:
+                    st = 0
+                    again(c)
+            else:
+                match c:
+                    case 43 | 44 | 45 | 46 | 60 | 62 | 91 | 93:
+                        store8(CMDP, c)
+                        pinc(CMDP)
+                        dinc(NCMD)
+                        if c == 43 or c == 45 or c == 60 or c == 62:
+                            if RUNC == c:
+                                dinc(RUNN)
+                            else:
+                                RUNC = c
+                                RUNN = dec10(1)
+                        else:
+                            RUNC = 0
+                            RUNN = dec10(0)
+                        match c:
+                            case 62:
+                                hi = deq(PPOS, HIGH)
+                                dinc(PPOS)
+                                if hi:
+                                    HIGH = PPOS
+                                if deq(PPOS, TAPE):
+                                    OVER = 1
+                                if OVER:
+                                    ev = 10
+                            case 60:
+                                if deq(PPOS, TAPE):
+                                    OVER = 0
+                                ddec(PPOS)
+                                if dneg(PPOS):
+                                    ev = 11
+                            case 91:
+                                OPEN.cell = PPOS
+                                OPEN.line = LINE
+                                store(OPEN, SP2)
+                                padd64(SP2)
+                            case 93:
+                                if peq(SP2, STKB):
+                                    ev = 12
+                                else:
+                                    psub64(SP2)
+                                    load(OPEN, SP2)
+                                    if not deq(OPEN.cell, PPOS):
+                                        ev = 13
+                    case 9 | 32 | 31:
+                        pass
+                    case 126:
+                        st = 1
+                    case 64:
+                        st = 3
+                    case 35:
+                        incom = 1
+                    case _:
+                        UC = c
+                        ev = 8
+        match ev:
+            case 1:
+                break
+            case 2:
+                end_pending(st)
+                st = 0
+            case 3:
+                comment_check(bad)
+                for k in range(8):
+                    bad[k] = 0
+                anybad = 0
+            case 4:
+                run_error()
+                RUNC = 0
+                RUNN = dec10(0)
+            case 5:
+                checkpoint()
+            case 6:
+                err_head()
+                diag("malformed run assertion\n")
+            case 7:
+                err_head()
+                diag("malformed checkpoint\n")
+            case 8:
+                unexpected(UC)
+            case 9:
+                HASOFF = 0
+                checkpoint()
+                unexpected(58)
+            case 10:
+                err_head()
+                diag("pointer leaves the ")
+                diag_dec(TAPE)
+                diag("-cell tape\n")
+            case 11:
+                err_head()
+                diag("pointer below cell 0\n")
+            case 12:
+                err_head()
+                diag("unmatched ]\n")
+            case 13:
+                err_head()
+                diag("loop opened on line ")
+                diag_dec(OPEN.line)
+                diag(" at cell ")
+                diag_dec(OPEN.cell)
+                diag(" closes at cell ")
+                diag_dec(PPOS)
+                diagc(10)
+                PPOS = OPEN.cell
+                x = dlt(PPOS, TAPE)
+                OVER = 1 - x
+            case 14:
+                name_too_long()
+    close_open()
+    store8(CMDP, 0)
+
+
+def close_open():
+    """Loops still open at the end, outermost first."""
+    o: Open
+    p: ptr = STKB
+    while not peq(p, SP2):
+        load(o, p)
+        LINE = o.line
+        err_head()
+        diag("unmatched [\n")
+        padd64(p)

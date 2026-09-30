@@ -130,28 +130,85 @@ dependencies {
 }
 
 // ---- Brainfuck core: generation, checks and the host build used by JVM tests.
+//
+// Generation runs bfcc, the Brainfuck compiler written in Brainfuck, built
+// from the committed tools/bfcc/bfcc.generated.c with the host C compiler: no
+// Python. Python remains for the test oracle and the bootstrap check
+// (tools/bfcc/selfhost.py).
 
 val python = if (System.getProperty("os.name").startsWith("Windows")) "python" else "python3"
+val isWindows = System.getProperty("os.name").startsWith("Windows")
+val bfccDir = rootProject.file("tools/bfcc")
+val bfccExe = rootProject.layout.buildDirectory.file(if (isWindows) "bfcc/bfcc.exe" else "bfcc/bfcc").get().asFile
 val hostCoreLibrary = rootProject.layout.buildDirectory.file(
     "bfhost/" + System.mapLibraryName("gmailbf")
 ).get().asFile
 
+/** The host C compiler: $CC or cc, or MSVC (found with vswhere) on Windows. */
+fun hostCompile(output: File, sources: List<File>): List<String> {
+    if (!isWindows) {
+        return listOf(System.getenv("CC") ?: "cc", "-O2", "-std=c11", "-o", output.absolutePath) +
+            sources.map { it.absolutePath }
+    }
+    val vswhere = File(
+        System.getenv("ProgramFiles(x86)") ?: "C:/Program Files (x86)",
+        "Microsoft Visual Studio/Installer/vswhere.exe"
+    )
+    if (!vswhere.isFile) {
+        throw GradleException("No host C compiler: install Visual Studio Build Tools (C++).")
+    }
+    val found = providers.exec {
+        commandLine(
+            vswhere.absolutePath, "-latest", "-products", "*", "-requires",
+            "Microsoft.VisualStudio.Component.VC.Tools.x86.x64", "-property", "installationPath"
+        )
+    }.standardOutput.asText.get()
+    val vcvars = File(found.trim(), "VC/Auxiliary/Build/vcvars64.bat")
+    if (!vcvars.isFile) {
+        throw GradleException("No host C compiler: MSVC x64 tools not found.")
+    }
+    // A batch file keeps cmd's quoting rules away from the paths; objects go
+    // to the output directory, the batch file's working directory.
+    val script = File(output.parentFile, "build-" + output.nameWithoutExtension + ".bat")
+    script.writeText(
+        "@set \"PATH=%PATH%;${vswhere.parentFile.absolutePath}\"\r\n" +
+            "@call \"${vcvars.absolutePath}\" >nul\r\n" +
+            "@cd /d \"${output.parentFile.absolutePath}\"\r\n" +
+            "cl /nologo /O2 /std:c11 /Fe\"${output.name}\" " +
+            sources.joinToString(" ") { "\"${it.absolutePath}\"" } + "\r\n"
+    )
+    return listOf("cmd", "/c", script.absolutePath)
+}
+
+val buildBfcc by tasks.registering(Exec::class) {
+    group = "brainfuck"
+    description = "Builds bfcc, the Brainfuck compiler, from the committed tools/bfcc/bfcc.generated.c."
+    inputs.files(fileTree(bfccDir) { include("*.c", "*.h") })
+    outputs.file(bfccExe)
+    workingDir = bfccDir
+    doFirst {
+        bfccExe.parentFile.mkdirs()
+        commandLine(hostCompile(bfccExe, listOf(File(bfccDir, "bfcc_host.c"), File(bfccDir, "bfcc_main.c"))))
+    }
+}
+
 val generateBrainfuck by tasks.registering(Exec::class) {
     group = "brainfuck"
-    description = "Lints brainfuck/src and regenerates the AOT C source, ABI constants and memory map."
+    description = "Lints brainfuck/src and regenerates the AOT C source, ABI constants and memory map (bfcc)."
+    dependsOn(buildBfcc)
     workingDir = rootDir
-    commandLine(python, "tools/bftool/gen.py")
+    commandLine(bfccExe.absolutePath, "gen")
 }
 
 val checkBrainfuck by tasks.registering(Exec::class) {
     group = "brainfuck"
-    description = "Fails when the generated C, ABI or memory map files are stale."
+    description = "Fails when the generated C, ABI or memory map files are stale (bfcc)."
+    dependsOn(buildBfcc)
     workingDir = rootDir
     inputs.dir(rootProject.file("brainfuck"))
-    inputs.dir(rootProject.file("tools/bftool"))
     inputs.dir("src/main/cpp/generated")
     outputs.upToDateWhen { false }
-    commandLine(python, "tools/bftool/gen.py", "--check")
+    commandLine(bfccExe.absolutePath, "gen", "--check")
 }
 
 val buildHostCore by tasks.registering(Exec::class) {

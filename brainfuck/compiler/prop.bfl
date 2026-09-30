@@ -1,0 +1,699 @@
+"""Known-value and copy propagation, equality-test recognition
+(tools/bftool/ir.py: _Known, _match_copy, _match_ifeq, _propagate).
+
+A known-value state ("slot") is two dense byte maps over the program's
+offset range, one for values and one for "unknown" flags; an unknown cell
+is always stored as value 0, flag 1, so two states are equal exactly when
+their bytes are. Slot k's maps live at addresses whose top byte is
+0x40 + 2k (values) and 0x41 + 2k (flags); the low three bytes encode the
+offset, so no address arithmetic is needed. Copying a state is one COPY,
+comparing is DIFF, and a merge visits only the cells that differ.
+Slot 0 is the template for a fresh state.
+"""
+
+SLOTS = 96
+
+KV: u8          # kget's value
+KU: u8          # kget: 1 when unknown
+KLO: ptr        # address bytes of the lowest offset (top byte per slot)
+KHI: ptr        # one past the highest offset
+KSP: u8         # next free slot
+LO: dec         # offset range (ir.offset_range)
+HI: dec
+
+# _match_copy results
+MC_s: dec
+MC_f: dec
+MC_t: dec
+MC_ta: u8
+
+# _match_ifeq results
+M_s: dec
+M_v: u8
+M_then: Span
+M_other: Span
+M_next: ptr
+
+
+@inline
+def kaddr(a: ptr, off: dec):
+    """The low three address bytes of an offset (|offset| < 500000)."""
+    x: u8 = off[5]
+    a[0] = off[0] + off[1] * 10
+    a[1] = off[2] + off[3] * 10
+    bias(x)
+    a[2] = off[4] + x * 10
+
+
+def kget(slot: u8, off: dec):
+    a: ptr
+    kaddr(a, off)
+    a[3] = 64 + slot * 2
+    load(KV, a)
+    a[3] += 1
+    load(KU, a)
+
+
+def kput(slot: u8, off: dec, v: u8):
+    a: ptr
+    kaddr(a, off)
+    a[3] = 64 + slot * 2
+    store8(a, v)
+    a[3] += 1
+    store8(a, 0)
+
+
+def kforget(slot: u8, off: dec):
+    a: ptr
+    kaddr(a, off)
+    a[3] = 64 + slot * 2
+    store8(a, 0)
+    a[3] += 1
+    store8(a, 1)
+
+
+def kcopy(dst: u8, src: u8):
+    s: ptr = KLO
+    e: ptr = KHI
+    d: ptr = KLO
+    s[3] = 64 + src * 2
+    e[3] = 64 + src * 2
+    d[3] = 64 + dst * 2
+    mcopy(s, e, d)
+    s[3] += 1
+    e[3] += 1
+    d[3] += 1
+    mcopy(s, e, d)
+
+
+def kmerge(dst: u8, src: u8):
+    """dst = merge(dst, src): unknown wherever the two states differ."""
+    for r in range(2):
+        x: ptr = KLO
+        e: ptr = KHI
+        o: ptr
+        v: ptr
+        go: u8 = 1
+        x[3] = 64 + dst * 2 + r
+        e[3] = 64 + dst * 2 + r
+        while go:
+            o = x
+            o[3] = 64 + src * 2 + r
+            mdiff(x, e, o, x)
+            if peq(x, e):
+                go = 0
+            else:
+                v = x
+                v[3] = 64 + dst * 2
+                store8(v, 0)
+                v[3] += 1
+                store8(v, 1)
+                pinc(x)
+
+
+def ksame(a: u8, b: u8) -> u8:
+    r: u8 = 1
+    for k in range(2):
+        x: ptr = KLO
+        e: ptr = KHI
+        o: ptr = KLO
+        x[3] = 64 + a * 2 + k
+        e[3] = 64 + a * 2 + k
+        o[3] = 64 + b * 2 + k
+        mdiff(x, e, o, x)
+        if not peq(x, e):
+            r = 0
+    return r
+
+
+def kalloc() -> u8:
+    r: u8 = KSP
+    KSP += 1
+    if KSP == SLOTS:
+        diag("bfcc: loops and tests nest too deeply for value propagation\n")
+        halt(2)
+    return r
+
+
+def orange(s: ptr, e: ptr):
+    """ir.offset_range: widens LO..HI over a list and its bodies."""
+    p: ptr = s
+    r: Op
+    x: u8 = 0
+    q1: ptr
+    q2: ptr
+    q3: ptr
+    q4: ptr
+    while not peq(p, e):
+        load_op(r, p)
+        match r.kind:
+            case K.MUL | K.MOV:
+                x = dlt(r.a, LO)
+                if x:
+                    LO = r.a
+                x = dlt(HI, r.a)
+                if x:
+                    HI = r.a
+                x = dlt(r.b, LO)
+                if x:
+                    LO = r.b
+                x = dlt(HI, r.b)
+                if x:
+                    HI = r.b
+            case K.ADD | K.SET | K.IN | K.OUT | K.LOOP | K.IF | K.IFEQ:
+                x = dlt(r.a, LO)
+                if x:
+                    LO = r.a
+                x = dlt(HI, r.a)
+                if x:
+                    HI = r.a
+        match r.kind:
+            case K.LOOP | K.IF:
+                q1 = r.p1
+                q2 = r.e1
+                orange(q1, q2)
+            case K.IFEQ:
+                q1 = r.p1
+                q2 = r.e1
+                q3 = r.p2
+                q4 = r.e2
+                orange(q1, q2)
+                orange(q3, q4)
+        padd64(p)
+
+
+def is_static(s: ptr, e: ptr) -> u8:
+    p: ptr = s
+    r: Op
+    x: u8 = 0
+    q1: ptr
+    q2: ptr
+    q3: ptr
+    q4: ptr
+    while not peq(p, e):
+        load_op(r, p)
+        match r.kind:
+            case K.MOVE | K.ULOOP:
+                return 0
+            case K.LOOP | K.IF:
+                q1 = r.p1
+                q2 = r.e1
+                x = is_static(q1, q2)
+                if x == 0:
+                    return 0
+            case K.IFEQ:
+                q1 = r.p1
+                q2 = r.e1
+                q3 = r.p2
+                q4 = r.e2
+                x = is_static(q1, q2)
+                if x == 0:
+                    return 0
+                x = is_static(q3, q4)
+                if x == 0:
+                    return 0
+        padd64(p)
+    return 1
+
+
+def forget(slot: u8, s: ptr, e: ptr):
+    """_Known.forget(_written(list))."""
+    p: ptr = s
+    r: Op
+    q1: ptr
+    q2: ptr
+    q3: ptr
+    q4: ptr
+    while not peq(p, e):
+        load_op(r, p)
+        match r.kind:
+            case K.ADD | K.SET | K.IN:
+                kforget(slot, r.a)
+            case K.MUL | K.MOV:
+                kforget(slot, r.b)
+            case K.LOOP | K.IF:
+                q1 = r.p1
+                q2 = r.e1
+                kforget(slot, r.a)
+                forget(slot, q1, q2)
+            case K.IFEQ:
+                q1 = r.p1
+                q2 = r.e1
+                q3 = r.p2
+                q4 = r.e2
+                forget(slot, q1, q2)
+                forget(slot, q3, q4)
+        padd64(p)
+
+
+def touches(s: ptr, e: ptr, c1: dec, c2: dec) -> u8:
+    """ir._touches: may the list read or write c1 or c2. Scans without
+    leaving the loop until a record has a body to search."""
+    p: ptr = s
+    r: Op
+    x: u8 = 0
+    ev: u8 = 0
+    q3: ptr
+    q4: ptr
+    while True:
+        ev = 0
+        while ev == 0:
+            if peq(p, e):
+                ev = 3
+            else:
+                load(r, p, 0, HEAD_SIZE)
+                match r.kind:
+                    case K.MOVE | K.ULOOP:
+                        ev = 1
+                if deq(r.a, c1) or deq(r.a, c2):
+                    ev = 1
+                match r.kind:
+                    case K.MUL | K.MOV:
+                        if deq(r.b, c1) or deq(r.b, c2):
+                            ev = 1
+                    case K.LOOP | K.IF | K.IFEQ:
+                        if ev == 0:
+                            ev = 2
+                if ev == 0:
+                    padd64(p)
+        if ev == 1:
+            return 1
+        if ev == 3:
+            return 0
+        load(r, p, HEAD_SIZE, 35)
+        q3 = r.p2
+        q4 = r.e2
+        x = touches(r.p1, r.e1, c1, c2)
+        if x:
+            return 1
+        if r.kind == K.IFEQ:
+            x = touches(q3, q4, c1, c2)
+            if x:
+                return 1
+        padd64(p)
+
+
+def match_copy(i: ptr, e: ptr, slot: u8) -> u8:
+    """ir._match_copy: s -> f through t, t zero beforehand."""
+    p: ptr = i
+    ha: Head
+    hb: Head
+    hc: Head
+    hd: Head
+    he: Head
+    if peq(p, e):
+        return 0
+    load(ha, p)
+    if ha.kind != K.MUL or ha.n != 1:
+        return 0
+    padd64(p)
+    if peq(p, e):
+        return 0
+    load(hb, p)
+    padd64(p)
+    if peq(p, e):
+        return 0
+    load(hc, p)
+    padd64(p)
+    if peq(p, e):
+        return 0
+    load(hd, p)
+    padd64(p)
+    if peq(p, e):
+        return 0
+    load(he, p)
+    if hb.kind != K.MUL or hb.n != 1 or not deq(ha.a, hb.a):
+        return 0
+    if hc.kind != K.SET or hc.n != 0 or not deq(hc.a, ha.a):
+        return 0
+    if hd.kind != K.MUL or hd.n != 1 or not deq(hd.a, hb.b) or not deq(hd.b, ha.a):
+        return 0
+    if he.kind != K.SET or not deq(he.a, hb.b):
+        return 0
+    if deq(ha.a, ha.b) or deq(ha.a, hb.b) or deq(ha.b, hb.b):
+        return 0
+    kget(slot, hb.b)
+    if KU or KV != 0:
+        return 0
+    MC_s = ha.a
+    MC_f = ha.b
+    MC_t = hb.b
+    MC_ta = he.n
+    return 1
+
+
+def match_ifeq(i: ptr, e: ptr, slot: u8) -> u8:
+    """ir._match_ifeq: f := s; [f += n]; e += 1; if f {e = 0; OTHER; f = 0};
+    if e {THEN; e = 0}  =>  if (s == -n) THEN else OTHER."""
+    c: u8 = 0
+    n: u8 = 0
+    j: ptr = i
+    q: ptr
+    ec: dec
+    fs: ptr
+    fe: ptr
+    es: ptr
+    ee: ptr
+    ha: Head
+    rf: Op
+    re: Op
+    c = match_copy(i, e, slot)
+    if c == 0:
+        return 0
+    kget(slot, MC_f)
+    if KU or KV != 0:
+        return 0
+    if MC_ta != 0:
+        return 0
+    for k in range(5):
+        padd64(j)
+    if not peq(j, e):
+        load(ha, j)
+        if ha.kind == K.ADD and deq(ha.a, MC_f):
+            n = ha.n
+            padd64(j)
+    if peq(j, e):
+        return 0
+    load(ha, j)
+    padd64(j)
+    if peq(j, e):
+        return 0
+    load(rf, j)
+    padd64(j)
+    if peq(j, e):
+        return 0
+    load(re, j)
+    padd64(j)
+    if ha.kind != K.ADD or ha.n != 1:
+        return 0
+    ec = ha.a
+    if deq(ec, MC_s) or deq(ec, MC_f):
+        return 0
+    kget(slot, ec)
+    if KU or KV != 0:
+        return 0
+    if rf.kind != K.IF or not deq(rf.a, MC_f) or re.kind != K.IF or not deq(re.a, ec):
+        return 0
+    fs = rf.p1
+    fe = rf.e1
+    es = re.p1
+    ee = re.e1
+    if peq(fs, fe):
+        return 0
+    q = fs
+    padd64(q)
+    if peq(q, fe):
+        return 0
+    load(ha, fs)
+    if ha.kind != K.SET or ha.n != 0 or not deq(ha.a, ec):
+        return 0
+    q = fe
+    psub64(q)
+    load(ha, q)
+    if ha.kind != K.SET or ha.n != 0 or not deq(ha.a, MC_f):
+        return 0
+    fe = q
+    padd64(fs)
+    if peq(es, ee):
+        return 0
+    q = ee
+    psub64(q)
+    load(ha, q)
+    if ha.kind != K.SET or ha.n != 0 or not deq(ha.a, ec):
+        return 0
+    ee = q
+    c = touches(fs, fe, MC_f, ec)
+    if c:
+        return 0
+    c = touches(es, ee, MC_f, ec)
+    if c:
+        return 0
+    M_s = MC_s
+    M_v = 0 - n
+    M_then.s = es
+    M_then.e = ee
+    M_other.s = fs
+    M_other.e = fe
+    M_next = j
+    return 1
+
+
+def prop(s: ptr, e: ptr, slot: u8):
+    """ir._propagate: appends the rewritten list to the work list and
+    updates the known state `slot`."""
+    i: ptr = s
+    m: u8 = 0
+    ms: dec
+    mv: u8 = 0
+    th: Span
+    ot: Span
+    ts: Span
+    os: Span
+    t1: u8 = 0
+    t2: u8 = 0
+    t3: u8 = 0
+    st: ptr
+    off: dec
+    bs: ptr
+    be: ptr
+    it: u8 = 0
+    conv: u8 = 0
+    su: u8 = 0
+    sv: u8 = 0
+    du: u8 = 0
+    dv: u8 = 0
+    v: u8 = 0
+    r: Op
+    nw: Op
+    while not peq(i, e):
+        m = match_ifeq(i, e, slot)
+        if m:
+            ms = M_s
+            mv = M_v
+            th = M_then
+            ot = M_other
+            i = M_next
+            kget(slot, ms)
+            if KU == 0:
+                if KV == mv:
+                    prop(th.s, th.e, slot)
+                else:
+                    prop(ot.s, ot.e, slot)
+                continue
+            t1 = kalloc()
+            kcopy(t1, slot)
+            kput(t1, ms, mv)
+            st = WK
+            prop(th.s, th.e, t1)
+            ts = finalize(st)
+            t2 = kalloc()
+            kcopy(t2, slot)
+            st = WK
+            prop(ot.s, ot.e, t2)
+            os = finalize(st)
+            if not peq(ts.s, ts.e) or not peq(os.s, os.e):
+                nw.kind = K.IFEQ
+                nw.a = ms
+                nw.n = mv
+                nw.p1 = ts.s
+                nw.e1 = ts.e
+                nw.p2 = os.s
+                nw.e2 = os.e
+                push(nw)
+            kmerge(t1, t2)
+            kcopy(slot, t1)
+            KSP -= 2
+            continue
+        m = match_copy(i, e, slot)
+        if m:
+            kget(slot, MC_f)
+            if KU == 0 and KV == 0:
+                kget(slot, MC_s)
+                if KU:
+                    nw.kind = K.MOV
+                    nw.a = MC_s
+                    nw.b = MC_f
+                    nw.n = 1
+                    nw.base = 0
+                    push(nw)
+                    kforget(slot, MC_f)
+                else:
+                    v = KV
+                    if v != 0:
+                        nw.kind = K.SET
+                        nw.a = MC_f
+                        nw.n = v
+                        push(nw)
+                    kput(slot, MC_f, v)
+                if MC_ta != 0:
+                    nw.kind = K.SET
+                    nw.a = MC_t
+                    nw.n = MC_ta
+                    push(nw)
+                    kput(slot, MC_t, MC_ta)
+                for k in range(5):
+                    padd64(i)
+                continue
+        load_op(r, i)
+        padd64(i)
+        match r.kind:
+            case K.ADD:
+                kget(slot, r.a)
+                if KU:
+                    push_head(r)
+                else:
+                    v = KV + r.n
+                    nw.kind = K.SET
+                    nw.a = r.a
+                    nw.n = v
+                    push(nw)
+                    kput(slot, r.a, v)
+            case K.SET:
+                kget(slot, r.a)
+                if KU or KV != r.n:
+                    push_head(r)
+                    kput(slot, r.a, r.n)
+            case K.MUL:
+                kget(slot, r.a)
+                su = KU
+                sv = KV
+                kget(slot, r.b)
+                du = KU
+                dv = KV
+                if su == 0:
+                    v = sv * r.n
+                    if v != 0:
+                        if du:
+                            nw.kind = K.ADD
+                            nw.a = r.b
+                            nw.n = v
+                            push(nw)
+                        else:
+                            v += dv
+                            nw.kind = K.SET
+                            nw.a = r.b
+                            nw.n = v
+                            push(nw)
+                            kput(slot, r.b, v)
+                elif du == 0:
+                    nw.kind = K.MOV
+                    nw.a = r.a
+                    nw.b = r.b
+                    nw.n = r.n
+                    nw.base = dv
+                    push(nw)
+                    kforget(slot, r.b)
+                else:
+                    push_head(r)
+                    kforget(slot, r.b)
+            case K.IN:
+                push_head(r)
+                kforget(slot, r.a)
+            case K.OUT:
+                push_head(r)
+            case K.LOOP:
+                off = r.a
+                bs = r.p1
+                be = r.e1
+                kget(slot, off)
+                if KU == 0 and KV == 0:
+                    continue
+                # Fixpoint: the loop-head state merges the state before the
+                # loop with the state after each iteration.
+                t1 = kalloc()
+                kcopy(t1, slot)
+                it = 8
+                conv = 0
+                while it != 0 and conv == 0:
+                    t2 = kalloc()
+                    kcopy(t2, t1)
+                    st = WK
+                    prop(bs, be, t2)
+                    WK = st
+                    t3 = kalloc()
+                    kcopy(t3, slot)
+                    kmerge(t3, t2)
+                    conv = ksame(t3, t1)
+                    if conv == 0:
+                        kcopy(t1, t3)
+                    KSP -= 2
+                    it -= 1
+                if conv == 0:
+                    kcopy(t1, slot)
+                    forget(t1, bs, be)
+                t2 = kalloc()
+                kcopy(t2, t1)
+                st = WK
+                prop(bs, be, t2)
+                ts = finalize(st)
+                KSP -= 1
+                nw.kind = K.LOOP
+                nw.a = off
+                nw.p1 = ts.s
+                nw.e1 = ts.e
+                push(nw)
+                kcopy(slot, t1)
+                KSP -= 1
+                kput(slot, off, 0)
+            case K.IF:
+                off = r.a
+                bs = r.p1
+                be = r.e1
+                kget(slot, off)
+                if KU == 0:
+                    if KV == 0:
+                        continue
+                    prop(bs, be, slot)
+                else:
+                    t1 = kalloc()
+                    kcopy(t1, slot)
+                    st = WK
+                    prop(bs, be, t1)
+                    ts = finalize(st)
+                    nw.kind = K.IF
+                    nw.a = off
+                    nw.p1 = ts.s
+                    nw.e1 = ts.e
+                    push(nw)
+                    kmerge(slot, t1)
+                    KSP -= 1
+                kput(slot, off, 0)
+            case _:
+                diag("bfcc: unexpected op in a static program\n")
+                halt(3)
+
+
+def propagate():
+    """compile_bf's second phase: _peephole(_propagate(ops, _Known(0, {})))."""
+    k: u8 = 0
+    st: ptr = WK
+    pe: ptr
+    p: ptr
+    nw: Op
+    LO = dec10(0)
+    HI = dec10(0)
+    orange(TOP.s, TOP.e)
+    KLO = le(0)
+    KHI = le(0)
+    kaddr(KLO, LO)
+    kaddr(KHI, HI)
+    pinc(KHI)
+    KSP = 1
+    # Template: offsets below zero_from (0) are unknown, the rest zero.
+    off: dec = LO
+    while dneg(off):
+        kforget(0, off)
+        dinc(off)
+    k = kalloc()
+    kcopy(k, 0)
+    prop(TOP.s, TOP.e, k)
+    KSP -= 1
+    pe = WK
+    LST = WK
+    p = st
+    while not peq(p, pe):
+        load(nw, p)
+        put(nw)
+        padd64(p)
+    TOP = finalize(pe)
+    WK = st

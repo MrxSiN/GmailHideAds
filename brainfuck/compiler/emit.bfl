@@ -1,0 +1,484 @@
+"""C emission (tools/bftool/ir.py: emit_c, _emit_block, _switch_run) and
+the job driver: what the host passes through GETC, what goes out."""
+
+NM_BASE = 0x3A000000        # per program: tape (8 digits) then its name
+SEEN_BASE = 0x3B000000      # _switch_run's value sets, 256 bytes each
+
+TAPE: dec
+NAMEP: ptr
+SEEN: ptr
+SW_END: ptr
+
+
+def put_name():
+    p: ptr = NAMEP
+    c: u8 = 0
+    load(c, p)
+    while c != 0:
+        putc(c)
+        pinc(p)
+        load(c, p)
+
+
+def diag_name():
+    p: ptr = NAMEP
+    c: u8 = 0
+    load(c, p)
+    while c != 0:
+        diagc(c)
+        pinc(p)
+        load(c, p)
+
+
+@inline
+def pad(depth: u8):
+    i: u8 = depth
+    while i:
+        puts("    ")
+        i -= 1
+
+
+def switch_run(i: ptr, e: ptr) -> u8:
+    """ir._switch_run: 1 when at least three equality tests on one cell,
+    with distinct values, no else and bodies that leave the cell alone,
+    start at i; SW_END is where the run ends."""
+    j: ptr = i
+    r: Op
+    cell: dec
+    a: ptr
+    q1: ptr
+    q2: ptr
+    seen: u8 = 0
+    w: u8 = 0
+    cnt: u8 = 0
+    SW_END = i
+    load(r, i)
+    if r.kind != K.IFEQ or not peq(r.p2, r.e2):
+        return 0
+    cell = r.a
+    # A fresh 256-byte value set.
+    SEEN[1] += 1
+    if SEEN[1] == 0:
+        SEEN[2] += 1
+    while not peq(j, e):
+        load(r, j)
+        if r.kind != K.IFEQ or not deq(r.a, cell) or not peq(r.p2, r.e2):
+            break
+        a = SEEN
+        a[0] = r.n
+        load(seen, a)
+        if seen:
+            break
+        q1 = r.p1
+        q2 = r.e1
+        w = writes(q1, q2, cell)
+        if w:
+            break
+        store8(a, 1)
+        padd64(j)
+        if cnt != 3:
+            cnt += 1
+    SW_END = j
+    return cnt == 3
+
+
+def emit_block(s: ptr, e: ptr, depth: u8):
+    i: ptr = s
+    run: u8 = 0
+    we: ptr
+    q1: ptr
+    q2: ptr
+    q3: ptr
+    q4: ptr
+    d1: u8 = 0
+    r: Op
+    while not peq(i, e):
+        run = switch_run(i, e)
+        if run:
+            we = SW_END
+            load(r, i)
+            pad(depth)
+            puts("switch (p[")
+            put_dec(r.a)
+            puts("]) {\n")
+            d1 = depth + 1
+            while not peq(i, we):
+                load(r, i)
+                q1 = r.p1
+                q2 = r.e1
+                pad(depth)
+                puts("case ")
+                put_u8(r.n)
+                puts(": {\n")
+                emit_block(q1, q2, d1)
+                pad(depth)
+                puts("    break;\n")
+                pad(depth)
+                puts("}\n")
+                padd64(i)
+            pad(depth)
+            puts("}\n")
+            continue
+        load_op(r, i)
+        padd64(i)
+        pad(depth)
+        match r.kind:
+            case K.ADD:
+                puts("p[")
+                put_dec(r.a)
+                puts("] += ")
+                put_u8(r.n)
+                puts(";\n")
+            case K.SET:
+                puts("p[")
+                put_dec(r.a)
+                puts("] = ")
+                put_u8(r.n)
+                puts(";\n")
+            case K.MUL:
+                puts("p[")
+                put_dec(r.b)
+                if r.n == 1:
+                    puts("] += p[")
+                    put_dec(r.a)
+                    puts("];\n")
+                else:
+                    puts("] += (uint8_t)(p[")
+                    put_dec(r.a)
+                    puts("] * ")
+                    put_u8(r.n)
+                    puts(");\n")
+            case K.MOV:
+                puts("p[")
+                put_dec(r.b)
+                if r.n == 1 and r.base == 0:
+                    puts("] = p[")
+                    put_dec(r.a)
+                    puts("];\n")
+                else:
+                    puts("] = (uint8_t)(")
+                    put_u8(r.base)
+                    puts(" + p[")
+                    put_dec(r.a)
+                    puts("] * ")
+                    put_u8(r.n)
+                    puts(");\n")
+            case K.MOVE:
+                puts("p += ")
+                put_dec(r.a)
+                puts(";\n")
+                pad(depth)
+                puts("if (p < t || p >= t + ")
+                put_dec(TAPE)
+                puts(") return BF_ERR_TAPE;\n")
+            case K.IN:
+                puts("p[")
+                put_dec(r.a)
+                puts("] = BF_IN(io);\n")
+            case K.OUT:
+                puts("BF_OUT(io, p[")
+                put_dec(r.a)
+                puts("]);\n")
+            case K.LOOP | K.IF:
+                q1 = r.p1
+                q2 = r.e1
+                if r.kind == K.LOOP:
+                    puts("while (p[")
+                else:
+                    puts("if (p[")
+                put_dec(r.a)
+                puts("]) {\n")
+                if r.kind == K.LOOP:
+                    pad(depth)
+                    puts("    BF_TICK(io);\n")
+                d1 = depth + 1
+                emit_block(q1, q2, d1)
+                pad(depth)
+                puts("}\n")
+            case K.IFEQ:
+                q1 = r.p1
+                q2 = r.e1
+                q3 = r.p2
+                q4 = r.e2
+                puts("if (p[")
+                put_dec(r.a)
+                puts("] == ")
+                put_u8(r.n)
+                puts(") {\n")
+                d1 = depth + 1
+                emit_block(q1, q2, d1)
+                if not peq(q3, q4):
+                    pad(depth)
+                    puts("} else {\n")
+                    emit_block(q3, q4, d1)
+                pad(depth)
+                puts("}\n")
+            case K.ULOOP:
+                q1 = r.p1
+                q2 = r.e1
+                puts("while (*p) {\n")
+                pad(depth)
+                puts("    BF_TICK(io);\n")
+                d1 = depth + 1
+                emit_block(q1, q2, d1)
+                pad(depth)
+                puts("}\n")
+
+
+def emit_c():
+    """ir.emit_c for the program in TOP."""
+    st: u8 = 0
+    bad: u8 = 0
+    st = is_static(TOP.s, TOP.e)
+    if st:
+        LO = dec10(0)
+        HI = dec10(0)
+        orange(TOP.s, TOP.e)
+        bad = dlt(HI, TAPE)
+        if dneg(LO) or bad == 0:
+            diag_name()
+            diag(" addresses cells ")
+            diag_dec(LO)
+            diag("..")
+            diag_dec(HI)
+            diag(" outside tape ")
+            diag_dec(TAPE)
+            diag("\n")
+            halt(1)
+    puts("/* Generated from ")
+    put_name()
+    puts(".bf by bfcc. Do not edit. */\nBF_PROGRAM(")
+    put_name()
+    puts(")\n{\n    uint8_t *restrict p = t;\n")
+    emit_block(TOP.s, TOP.e, 1)
+    puts("    return BF_OK;\n}\n")
+
+
+# ---------------------------------------------------------------- job
+
+FLAG_PROPAGATE = 1      # zero_from = 0: every cell starts known zero
+FLAG_STATIC = 2         # reject programs whose loops move the pointer
+
+MODE_ONE = 1            # one program: print its function
+MODE_MANY = 2           # up to 255 MODE_ONE programs: their functions
+MODE_GEN = 3            # the manifest: the generated C file, memory map
+
+NM_NAME = 8             # entry layout: tape digits, name, path
+NM_PATH = 128
+
+
+def count_ops(s: ptr, e: ptr) -> dec:
+    """ir.count_ops."""
+    p: ptr = s
+    r: Op
+    n: dec = dec10(0)
+    x: dec
+    while not peq(p, e):
+        load_op(r, p)
+        dinc(n)
+        match r.kind:
+            case K.LOOP | K.IF | K.ULOOP:
+                x = count_ops(r.p1, r.e1)
+                n = dadd(n, x)
+            case K.IFEQ:
+                x = count_ops(r.p1, r.e1)
+                n = dadd(n, x)
+                x = count_ops(r.p2, r.e2)
+                n = dadd(n, x)
+        padd64(p)
+    return n
+
+
+def read_str(p: ptr):
+    """Job bytes through the next NUL to memory at p."""
+    c: u8 = 1
+    while c != 0:
+        c = getc()
+        store8(p, c)
+        pinc(p)
+
+
+def read_tape():
+    c: u8 = 0
+    TAPE = dec10(0)
+    c = getc()
+    while c != 0:
+        for i in range(7, 0, -1):
+            TAPE[i] = TAPE[i - 1]
+        TAPE[0] = c - 48
+        c = getc()
+
+
+def compile_program(flags: u8):
+    """The program whose commands getc() reads: parse, optimize, check,
+    print its C function (ir.compile_bf + ir.emit_c)."""
+    s: u8 = 0
+    WK = le(WK_BASE)
+    parse()
+    if flags == FLAG_PROPAGATE or flags == FLAG_PROPAGATE + FLAG_STATIC:
+        s = is_static(TOP.s, TOP.e)
+        if s:
+            propagate()
+    if flags == FLAG_STATIC or flags == FLAG_PROPAGATE + FLAG_STATIC:
+        s = is_static(TOP.s, TOP.e)
+        if s == 0:
+            diag_str(NAMEP)
+            diag(": generated BF must keep every loop balanced\n")
+            halt(1)
+    emit_c()
+
+
+def map_section(id: u8):
+    """The program's part of MEMORY_MAP.md (stream 1)."""
+    n: dec
+    p: ptr = le(SYM_BASE)
+    s: Sym
+    nb: ptr
+    n = count_ops(TOP.s, TOP.e)
+    select(1)
+    if id != 0:
+        putc(10)
+    puts("## ")
+    put_name()
+    puts(" (program ")
+    put_u8(id)
+    puts(")\n\nTape ")
+    put_dec(TAPE)
+    puts(" cells, zeroed before every request; high-water ")
+    dinc(HIGH)
+    put_dec(HIGH)
+    puts("; ")
+    put_dec(NCMD)
+    puts(" BF commands; ")
+    put_dec(n)
+    puts(" IR ops.\n\n| Region | Name | Address | Size |\n| --- | --- | --- | --- |\n")
+    while not peq(p, SYME):
+        load(s, p)
+        puts("| cell | `")
+        nb = p
+        put_str(nb)
+        puts("` | ")
+        put_dec(s.addr)
+        puts(" | ")
+        put_dec(s.size)
+        puts(" |\n")
+        padd64(p)
+    select(0)
+
+
+def put_str(p: ptr):
+    c: u8 = 0
+    load(c, p)
+    while c != 0:
+        putc(c)
+        pinc(p)
+        load(c, p)
+
+
+def gen_program(entry: ptr, id: u8):
+    """One manifest program: name, source path, tape, source."""
+    e: ptr
+    q: ptr = entry
+    q[0] += NM_NAME
+    NAMEP = q
+    read_str(q)
+    q = entry
+    q[0] += NM_PATH
+    PATHP = q
+    read_str(q)
+    read_tape()
+    store(TAPE, entry)
+    SRC = le(SRC_BASE)
+    slurp(SRC, e)
+    SYME = le(SYM_BASE)
+    GEN += 1
+    LBAD = 0
+    pass_decls()
+    pass_code()
+    if LBAD:
+        halt(1)
+    q = le(CMD_BASE)
+    source(q)
+    compile_program(FLAG_PROPAGATE + FLAG_STATIC)
+    jobsrc()
+    map_section(id)
+
+
+def main():
+    """Job: mode byte, then
+    MODE_ONE: tape digits NUL, name NUL, flags byte, source NUL;
+    MODE_MANY: program count, then that many MODE_ONE programs;
+    MODE_GEN: program count, then per program name NUL, source path NUL,
+    tape digits NUL, source NUL."""
+    mode: u8 = 0
+    count: u8 = 0
+    n: u8 = 0
+    id: u8 = 0
+    flags: u8 = 0
+    entry: ptr = le(NM_BASE)
+    q: ptr
+    AR = le(AR_BASE)
+    FRB = le(FR_BASE)
+    SEEN = le(SEEN_BASE)
+    mode = getc()
+    if mode == MODE_ONE:
+        read_tape()
+        q = entry
+        q[0] += NM_NAME
+        NAMEP = q
+        read_str(q)
+        flags = getc()
+        compile_program(flags)
+        halt(0)
+    if mode == MODE_MANY:
+        # Test batches: MODE_ONE programs back to back, functions only.
+        count = getc()
+        while count != 0:
+            read_tape()
+            q = entry
+            q[0] += NM_NAME
+            NAMEP = q
+            read_str(q)
+            flags = getc()
+            compile_program(flags)
+            count -= 1
+        halt(0)
+    if mode != MODE_GEN:
+        diag("bfcc: bad job\n")
+        halt(64)
+    count = getc()
+    select(1)
+    puts("# Brainfuck memory map (generated)\n\nGenerated by bfcc from the `%cell` declarations. ")
+    puts("Do not edit; see docs/BRAINFUCK_ARCHITECTURE.md.\n\n")
+    select(0)
+    puts("/* Generated by bfcc from brainfuck/src. Do not edit. */\n")
+    puts("#include \"../bf_runtime.h\"\n\n")
+    n = count
+    id = 0
+    while n != 0:
+        gen_program(entry, id)
+        putc(10)
+        entry[1] += 1
+        id += 1
+        n -= 1
+    puts("const bf_program_info bf_programs[] = {\n")
+    entry = le(NM_BASE)
+    n = count
+    while n != 0:
+        load(TAPE, entry)
+        q = entry
+        q[0] += NM_NAME
+        NAMEP = q
+        puts("    {\"")
+        put_name()
+        puts("\", bf_prog_")
+        put_name()
+        puts(", ")
+        put_dec(TAPE)
+        puts("},\n")
+        entry[1] += 1
+        n -= 1
+    puts("};\nconst int bf_program_count = ")
+    put_u8(count)
+    puts(";\n")
+    halt(0)
