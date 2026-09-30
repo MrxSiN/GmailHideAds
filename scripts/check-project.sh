@@ -33,8 +33,6 @@ for file in \
   "$SRC/core/ModuleRuntime.java" \
   "$DETECTOR" \
   "$LAYER" \
-  "$SRC/ui/AdRowCollapser.java" \
-  "$SRC/ui/ViewDescriptions.java" \
   "$SRC/policy/GmailPolicy.java" \
   "$SRC/policy/BfAbi.java" \
   "$ROOT/brainfuck/src/row.bf" \
@@ -101,6 +99,11 @@ grep -q 'ModuleRuntime.deoptimize' "$LAYER" \
 # collapsed ordinary mail whose subject read like a badge.
 ! grep -rq 'AdLabelVocabulary\|AdLabelDetector' "$SRC" \
   || fail "caption matching must not come back"
+
+# The policy core is raw Brainfuck (CLAUDE.md): no Java copy of the rule, and
+# the frozen v1 detector stays a test-only parity reference.
+! grep -rq 'Legacy\|endsWith(\|startsWith(' "$SRC" \
+  || fail "ad and scope decisions belong to the Brainfuck policy, not Java"
 
 # --- the Brainfuck core is built, tested and shipped ------------------------
 grep -q 'path = file("src/main/cpp/CMakeLists.txt")' "$APP_GRADLE" \

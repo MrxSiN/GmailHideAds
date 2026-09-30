@@ -26,7 +26,7 @@ stage 2 ──gen──► the committed policy C, memory map (unchanged)
 | `tools/bfcc/build.sh`, Gradle `buildBfcc` | build bfcc with the host C compiler (no Python) |
 | `tools/bfcc/bflc.py` | authoring tool: `.bfl` → `bfcc.bf` |
 | `tools/bfcc/selfhost.py` | the bootstrap chain above (CI) |
-| `tools/bfcc/boot.py`, `bench.py` | bootstrap helpers, the compiler benchmark |
+| `tools/bfcc/boot.py` | bootstrap helpers |
 | `tests/compiler/test_bfcc.py` | bfcc against the Python compiler and the reference interpreter |
 
 ## Using it
@@ -174,7 +174,7 @@ declarations first, and hands the commands to the parser.
 
 ## Performance
 
-Median of 9 runs, Windows x86-64, MSVC `/O2` (`python tools/bfcc/bench.py`):
+Median of 9 runs, Windows x86-64, MSVC `/O2`, measured when bfcc landed:
 
 | | Python | bfcc | |
 | --- | --- | --- | --- |

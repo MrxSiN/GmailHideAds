@@ -38,7 +38,7 @@ public class PolicyRobustnessTest {
 
     private static byte[] run(int program, byte[] request) {
         ByteBuffer out = ByteBuffer.allocateDirect(BfAbi.RUNTIME_OUT_CAP);
-        int length = NativePolicy.nativeRun(program, direct(request, request.length), request.length, out);
+        int length = GmailPolicy.nativeRun(program, direct(request, request.length), request.length, out);
         if (length < 0) {
             return new byte[]{(byte) length};
         }
@@ -86,10 +86,10 @@ public class PolicyRobustnessTest {
             assertEquals(-4, run(program, request)[0]);
         }
         ByteBuffer out = ByteBuffer.allocateDirect(64);
-        assertTrue(NativePolicy.nativeRun(BfAbi.PROG_SCOPE, null, 0, out) < 0);
-        assertTrue(NativePolicy.nativeRun(BfAbi.PROG_SCOPE, direct(request, 8), 9, out) < 0);
-        assertTrue(NativePolicy.nativeRun(BfAbi.PROG_SCOPE, direct(request, 8), -1, out) < 0);
-        assertTrue(NativePolicy.nativeRun(BfAbi.PROG_SCOPE, ByteBuffer.allocate(8), 8, out) < 0);
+        assertTrue(GmailPolicy.nativeRun(BfAbi.PROG_SCOPE, null, 0, out) < 0);
+        assertTrue(GmailPolicy.nativeRun(BfAbi.PROG_SCOPE, direct(request, 8), 9, out) < 0);
+        assertTrue(GmailPolicy.nativeRun(BfAbi.PROG_SCOPE, direct(request, 8), -1, out) < 0);
+        assertTrue(GmailPolicy.nativeRun(BfAbi.PROG_SCOPE, ByteBuffer.allocate(8), 8, out) < 0);
     }
 
     @Test

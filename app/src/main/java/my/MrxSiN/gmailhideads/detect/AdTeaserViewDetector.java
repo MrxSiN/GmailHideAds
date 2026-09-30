@@ -33,11 +33,14 @@ public final class AdTeaserViewDetector {
     /** addView is a hot path; each class is classified once. */
     private static final Map<Class<?>, Boolean> CACHE = new ConcurrentHashMap<>();
 
-    public boolean isAd(View candidate) {
+    private AdTeaserViewDetector() {
+    }
+
+    public static boolean isAd(View candidate) {
         return candidate != null && isAdType(candidate.getClass());
     }
 
-    public boolean isAdType(Class<?> type) {
+    public static boolean isAdType(Class<?> type) {
         Boolean cached = CACHE.get(type);
         if (cached != null) {
             return cached;

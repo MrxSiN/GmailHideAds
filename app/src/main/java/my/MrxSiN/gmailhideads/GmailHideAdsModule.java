@@ -12,7 +12,6 @@ import io.github.libxposed.api.XposedInterface;
 import io.github.libxposed.api.XposedModule;
 
 import my.MrxSiN.gmailhideads.core.ModuleRuntime;
-import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
 import my.MrxSiN.gmailhideads.discover.AdRowDiscovery;
 import my.MrxSiN.gmailhideads.hook.AdTeaserLayer;
 import my.MrxSiN.gmailhideads.policy.GmailPolicy;
@@ -152,9 +151,8 @@ public final class GmailHideAdsModule extends XposedModule {
 
         // Discovery failing, or finding nothing hookable, falls back to the
         // broad layer; a layer that fails is logged and skipped.
-        AdTeaserViewDetector detector = new AdTeaserViewDetector();
         try {
-            if (AdTeaserLayer.installInflate(AdRowDiscovery.find(appContext, detector), detector)) {
+            if (AdTeaserLayer.installInflate(AdRowDiscovery.find(appContext))) {
                 ModuleRuntime.log("Layer installed: ad-teaser inflate");
                 return;
             }
@@ -163,7 +161,7 @@ public final class GmailHideAdsModule extends XposedModule {
             ModuleRuntime.log("DexKit discovery failed; using the addView fallback", throwable);
         }
         try {
-            AdTeaserLayer.installAddView(detector);
+            AdTeaserLayer.installAddView();
             ModuleRuntime.log("Layer installed: ad-teaser addView");
         } catch (Throwable throwable) {
             ModuleRuntime.log("Layer failed, skipping: ad-teaser", throwable);

@@ -42,8 +42,6 @@ android {
         targetSdk = 36
         versionCode = 4
         versionName = appVersion
-        // Brainfuck request timing in the policy counters: debug builds, or -PpolicyTiming.
-        buildConfigField("boolean", "POLICY_TIMING", project.hasProperty("policyTiming").toString())
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
     }
 

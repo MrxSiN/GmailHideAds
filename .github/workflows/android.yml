@@ -50,9 +50,6 @@ jobs:
       - name: bfcc self-hosting chain
         run: python3 tools/bfcc/selfhost.py
 
-      - name: The Python compiler (oracle) agrees
-        run: python3 tools/bftool/gen.py --check
-
       - name: Brainfuck toolchain and program tests (reference vs Python compiler vs bfcc vs AOT, randomized, malformed frames)
         run: python3 -m unittest discover -s tests/compiler -v
 

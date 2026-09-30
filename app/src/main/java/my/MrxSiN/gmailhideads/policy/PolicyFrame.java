@@ -141,7 +141,7 @@ final class PolicyFrame {
      */
     boolean send(int program, int expectedLength) {
         responseLength = 0;
-        if (overflow || !NativePolicy.isAvailable()) {
+        if (overflow || !GmailPolicy.isAvailable()) {
             return PolicyStats.failed(opcode, overflow ? PolicyStats.OVERFLOW : PolicyStats.UNAVAILABLE);
         }
         byte[] bytes = buffer;
@@ -160,15 +160,11 @@ final class PolicyFrame {
         ByteBuffer out = request;
         out.clear();
         out.put(bytes, 0, position);
-        long started = PolicyStats.TIMING ? System.nanoTime() : 0L;
         int length;
         try {
-            length = NativePolicy.nativeRun(program, out, position, response);
+            length = GmailPolicy.nativeRun(program, out, position, response);
         } catch (Throwable throwable) {
             return PolicyStats.failed(opcode, PolicyStats.NATIVE);
-        }
-        if (PolicyStats.TIMING) {
-            PolicyStats.timed(System.nanoTime() - started);
         }
         if (length < 0) {
             return PolicyStats.failed(opcode, PolicyStats.NATIVE);

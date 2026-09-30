@@ -12,8 +12,6 @@ import io.github.libxposed.api.XposedInterface;
 import my.MrxSiN.gmailhideads.core.ModuleRuntime;
 import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
 import my.MrxSiN.gmailhideads.policy.GmailPolicy;
-import my.MrxSiN.gmailhideads.ui.AdRowCollapser;
-import my.MrxSiN.gmailhideads.ui.ViewDescriptions;
 
 /**
  * Collapses every advertisement row before it is ever measured.
@@ -38,7 +36,7 @@ public final class AdTeaserLayer {
     private static final View.OnAttachStateChangeListener RECOLLAPSE = new View.OnAttachStateChangeListener() {
         @Override
         public void onViewAttachedToWindow(View row) {
-            AdRowCollapser.collapse(row, row.getLayoutParams());
+            collapse(row, row.getLayoutParams());
         }
 
         @Override
@@ -53,11 +51,11 @@ public final class AdTeaserLayer {
      * Hooks {@code onFinishInflate} of every row class, or nothing: false when
      * any class declares no such method or its hook was rejected.
      */
-    public static boolean installInflate(List<Class<?>> rows, AdTeaserViewDetector detector) {
+    public static boolean installInflate(List<Class<?>> rows) {
         XposedInterface.Hooker hooker = chain -> {
             Object result = chain.proceed();
             Object row = chain.getThisObject();
-            if (row instanceof View && detector.isAd((View) row)) {
+            if (row instanceof View && AdTeaserViewDetector.isAd((View) row)) {
                 View view = (View) row;
                 suppress(view, view.getLayoutParams());
                 view.addOnAttachStateChangeListener(RECOLLAPSE);
@@ -78,7 +76,7 @@ public final class AdTeaserLayer {
         return !rows.isEmpty();
     }
 
-    public static void installAddView(AdTeaserViewDetector detector) throws Throwable {
+    public static void installAddView() throws Throwable {
         Method addView = ViewGroup.class.getDeclaredMethod(
                 "addView", View.class, int.class, ViewGroup.LayoutParams.class);
 
@@ -88,7 +86,7 @@ public final class AdTeaserLayer {
 
         XposedInterface.Hooker hooker = chain -> {
             List<Object> args = chain.getArgs();
-            if (args.size() >= 3 && args.get(0) instanceof View && detector.isAd((View) args.get(0))) {
+            if (args.size() >= 3 && args.get(0) instanceof View && AdTeaserViewDetector.isAd((View) args.get(0))) {
                 View child = (View) args.get(0);
                 Object params = args.get(2);
                 suppress(child, params instanceof ViewGroup.LayoutParams
@@ -103,10 +101,56 @@ public final class AdTeaserLayer {
     }
 
     private static void suppress(View row, ViewGroup.LayoutParams params) {
-        AdRowCollapser.collapse(row, params);
+        collapse(row, params);
         // The view id survives Gmail's resource shrinking, so this line is
         // what makes a bug report actionable after a rename.
         ModuleRuntime.log("Collapsed advertisement row #" + COLLAPSED.incrementAndGet()
-                + ": " + ViewDescriptions.describe(row) + " (" + GmailPolicy.summary() + ")");
+                + ": " + describe(row) + " (" + GmailPolicy.summary() + ")");
+    }
+
+    /**
+     * Removes an advertisement row from the layout.
+     *
+     * <p>There is no matching restore. Gmail gives an advertisement its own view
+     * type, so a row of this class is never rebound to ordinary mail; once
+     * collapsed it can stay collapsed for the life of the instance.</p>
+     *
+     * <p>Both steps are needed. {@code GONE} stops the row drawing, but a
+     * RecyclerView layout manager still measures its attached children, so the
+     * height has to be zeroed for the row to take no space.</p>
+     */
+    private static void collapse(View row, ViewGroup.LayoutParams params) {
+        if (params != null && params.height != 0) {
+            params.height = 0;
+        }
+
+        if (row.getVisibility() != View.GONE) {
+            row.setVisibility(View.GONE);
+        }
+    }
+
+    /**
+     * Renders a view as a short string for the log.
+     *
+     * <p>The resource entry name is the useful half when it survives Gmail's
+     * resource shrinking, and the class name is the fallback when it does not.</p>
+     */
+    private static String describe(View view) {
+        if (view == null) {
+            return "null";
+        }
+
+        String type = view.getClass().getName();
+        int id = view.getId();
+
+        if (id == View.NO_ID) {
+            return type + "#no-id";
+        }
+
+        try {
+            return type + "#" + view.getResources().getResourceEntryName(id);
+        } catch (Throwable ignored) {
+            return type + "#0x" + Integer.toHexString(id);
+        }
     }
 }

@@ -42,7 +42,7 @@ public final class AdRowDiscovery {
     private AdRowDiscovery() {
     }
 
-    public static List<Class<?>> find(Context context, AdTeaserViewDetector detector) {
+    public static List<Class<?>> find(Context context) {
         long started = System.nanoTime();
         ClassLoader loader = context.getClassLoader();
         String source = context.getApplicationInfo().sourceDir + "|" + BuildConfig.VERSION_CODE;
@@ -53,7 +53,7 @@ public final class AdRowDiscovery {
             try {
                 for (String name : preferences.getStringSet(KEY_ROWS, Collections.emptySet())) {
                     Class<?> type = Class.forName(name, false, loader);
-                    if (detector.isAdType(type)) {
+                    if (AdTeaserViewDetector.isAdType(type)) {
                         rows.add(type);
                     }
                 }
@@ -65,7 +65,7 @@ public final class AdRowDiscovery {
             }
         }
 
-        List<Class<?>> rows = search(loader, detector);
+        List<Class<?>> rows = search(loader);
         if (!rows.isEmpty()) {
             Set<String> names = new HashSet<>();
             for (Class<?> row : rows) {
@@ -76,7 +76,7 @@ public final class AdRowDiscovery {
         return logged(rows, "found by DexKit", started);
     }
 
-    private static List<Class<?>> search(ClassLoader loader, AdTeaserViewDetector detector) {
+    private static List<Class<?>> search(ClassLoader loader) {
         System.loadLibrary("dexkit");
         List<Class<?>> rows = new ArrayList<>();
         try (DexKitBridge bridge = DexKitBridge.create(loader, true)) {
@@ -87,7 +87,7 @@ public final class AdRowDiscovery {
                 } catch (Throwable unresolved) {
                     continue;
                 }
-                if (detector.isAdType(type)) {
+                if (AdTeaserViewDetector.isAdType(type)) {
                     rows.add(type);
                 }
             }

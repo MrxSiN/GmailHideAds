@@ -1,5 +1,5 @@
 /*
- * JNI surface of libgmailbf: my.MrxSiN.gmailhideads.policy.NativePolicy.
+ * JNI surface of libgmailbf: my.MrxSiN.gmailhideads.policy.GmailPolicy.
  *
  * One native call per policy decision. The request and response live in
  * direct ByteBuffers owned by the calling thread, so nothing is allocated
@@ -11,7 +11,7 @@
 
 /* Returns the response length, or -status on failure. */
 JNIEXPORT jint JNICALL
-Java_my_MrxSiN_gmailhideads_policy_NativePolicy_nativeRun(JNIEnv *env, jclass clazz, jint program,
+Java_my_MrxSiN_gmailhideads_policy_GmailPolicy_nativeRun(JNIEnv *env, jclass clazz, jint program,
                                                      jobject request, jint request_len,
                                                      jobject response)
 {
@@ -32,7 +32,7 @@ Java_my_MrxSiN_gmailhideads_policy_NativePolicy_nativeRun(JNIEnv *env, jclass cl
 }
 
 JNIEXPORT jint JNICALL
-Java_my_MrxSiN_gmailhideads_policy_NativePolicy_nativeAbi(JNIEnv *env, jclass clazz)
+Java_my_MrxSiN_gmailhideads_policy_GmailPolicy_nativeAbi(JNIEnv *env, jclass clazz)
 {
     (void) env;
     (void) clazz;

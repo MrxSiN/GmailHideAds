@@ -23,7 +23,7 @@ Java host: class names, per-class cache, deoptimization, row collapsing
     |
 normalized primitive facts (one small code per character), one frame
     |
-JNI: NativePolicy.nativeRun  (@FastNative, direct buffers, one call)
+JNI: GmailPolicy.nativeRun  (@FastNative, direct buffers, one call)
     |
 AOT-compiled Brainfuck policy (libgmailbf.so)
     |
@@ -210,8 +210,8 @@ devices: `./gradlew :app:connectedDebugAndroidTest` (16 tests pass on arm64).
 ## Observability
 
 Every collapsed row is logged with the policy counters (`bfCalls`,
-`bfFailures`, `malformed`). Debug builds, or release builds made with
-`-PpolicyTiming`, add average and maximum request time.
+`bfFailures`, `malformed`). Request time is measured by
+`PolicyBenchmarkTest`, not on the device.
 
 ## Changing a policy safely
 
@@ -236,6 +236,6 @@ Every collapsed row is logged with the policy counters (`bfCalls`,
 - bfcc (`brainfuck/compiler`, `tools/bfcc`): the compiler of `ir.py`, `lint.py`
   and the memory map of `gen.py`, rewritten in Brainfuck and self-hosting.
 - Runtime and JNI glue: renamed to `libgmailbf` and
-  `my.MrxSiN.gmailhideads.policy.NativePolicy`; otherwise unchanged.
+  `my.MrxSiN.gmailhideads.policy.GmailPolicy`; otherwise unchanged.
 - `PolicyFrame`: one name alphabet, no reference table and no re-entry frame,
   because encoding never calls back into the host.

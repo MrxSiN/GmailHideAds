@@ -18,15 +18,15 @@ public final class HostCore {
         }
         String path = System.getProperty("gmailbf.hostlib");
         if (path == null) {
-            if (!NativePolicy.load()) {
-                throw new IllegalStateException("libgmailbf unavailable: " + NativePolicy.failure());
+            if (!GmailPolicy.load()) {
+                throw new IllegalStateException("libgmailbf unavailable: " + GmailPolicy.failure());
             }
             loaded = true;
             return;
         }
         System.load(path);
-        if (!NativePolicy.verify()) {
-            throw new IllegalStateException("host core rejected: " + NativePolicy.failure());
+        if (!GmailPolicy.verify()) {
+            throw new IllegalStateException("host core rejected: " + GmailPolicy.failure());
         }
         loaded = true;
     }
