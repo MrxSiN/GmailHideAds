@@ -3,5 +3,4 @@
 *.png binary
 *.webp binary
 *.bat text eol=crlf
-brainfuck/compiler/bfcc.bf linguist-generated=true -diff
 tools/bfcc/bfcc.generated.c linguist-generated=true -diff
