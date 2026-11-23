@@ -24,16 +24,23 @@ AD_ROWS = ["com.google.android.gm.ads.adteaser.BasicAdTeaserItemView",
            "com.google.android.gm.ads.adteaser.ImageCarouselAdTeaserItemView",
            "com.google.android.gm.ads.adteaser.RichButtonChipAdTeaserItemView",
            "com.google.android.gm.ads.adteaser.AppInstallButtonChipAdTeaserItemView",
-           "com.google.android.gm.ads.adteaser.EuSingleImageAdTeaserItemView"]
+           "com.google.android.gm.ads.adteaser.EuSingleImageAdTeaserItemView",
+           "com.google.android.apps.gmail.libraries.ads.adteaser.BasicAdTeaserItemView",
+           "com.google.android.apps.gmail.libraries.ads.adteaser.EuSingleImageAdTeaserItemView"]
 ORDINARY = ["android.view.View", "android.view.ViewGroup", "android.widget.FrameLayout",
             "java.lang.Object", "androidx.recyclerview.widget.RecyclerView",
             "com.google.android.gm.ads.AdTeaserItemViewHolder", "com.google.android.gm.AdTeaserItemView",
             "com.google.android.gm.ads", "com.google.android.gm.adsx.AdTeaserItemView",
             "Com.google.android.gm.ads.AdTeaserItemView", "com.google.android.gm.ads.AdteaserItemView",
-            "com.google.android.gm.ads.adteaser.BasicAdTeaserItemView$1", "", "AdTeaserItemView"]
+            "com.google.android.gm.ads.adteaser.BasicAdTeaserItemView$1", "", "AdTeaserItemView",
+            "com.google.android.apps.gmail.libraries.ad.AdTeaserItemView",
+            "com.google.android.apps.gmail.librarles.ads.AdTeaserItemView",
+            "com.google.android.apps.gmail.AdTeaserItemView", "com.google.android.apps.AdTeaserItemView",
+            "com.google.android.agm.ads.AdTeaserItemView", "com.google.android.gpps.gmail.libraries.ads.AdTeaserItemView"]
 PIECES = [frames.AD_PREFIX, frames.AD_SUFFIX, "adteaser.", "Basic", "Video", "Ad", "AdTeaser",
           "com.google.android.gm", ".", "ads.", "View", "Item", "AAd", "x", "$1", "ﬀ", "é",
-          "com.google.", "android.", "gm."]
+          "com.google.", "android.", "gm.", frames.APPS_PREFIX, "apps.", "gmail.", "libraries.",
+          "com.google.android.a", "p", "b"]
 
 
 def random_name(rng):
@@ -119,12 +126,13 @@ class ProgramsTest(unittest.TestCase):
         outs = self.aot_ok(ROW, [frames.ad_row(c) for c in cases])
         for c, out in zip(cases, outs):
             self.assertEqual([frames.legacy_ad_row(c)], list(frames.parse(out, C["OP_AD_ROW"], 1)), c)
-        self.assertEqual(6, sum(frames.legacy_ad_row([n]) for n in AD_ROWS))
+        self.assertEqual(8, sum(frames.legacy_ad_row([n]) for n in AD_ROWS))
 
     def test_random_rows(self):
         rng = random.Random(8)
         cases = [[random_name(rng) for _ in range(rng.randint(0, 6))] for _ in range(20000)]
         cases += [[frames.AD_PREFIX + "x" * rng.randint(0, 600) + frames.AD_SUFFIX] for _ in range(50)]
+        cases += [[frames.APPS_PREFIX + "x" * rng.randint(0, 600) + frames.AD_SUFFIX] for _ in range(50)]
         outs = self.aot_ok(ROW, [frames.ad_row(c) for c in cases])
         hits = 0
         for c, out in zip(cases, outs):

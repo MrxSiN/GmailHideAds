@@ -17,14 +17,16 @@ import my.MrxSiN.gmailhideads.policy.GmailPolicy;
  * {@code RichButtonChipAdTeaserItemView},
  * {@code AppInstallButtonChipAdTeaserItemView} and
  * {@code EuSingleImageAdTeaserItemView}, all in
- * {@code com.google.android.gm.ads.adteaser}.</p>
+ * {@code com.google.android.gm.ads.adteaser}; Gmail 2026.11 moved the same
+ * classes to {@code com.google.android.apps.gmail.libraries.ads.adteaser}.</p>
  *
  * <p>Matching the class rather than the rendered badge caption means the rule
  * needs no per-locale word list and cannot mistake a message whose subject
  * happens to read "Ad" for an advertisement.</p>
  *
  * <p>The rule itself (the class or one of its superclasses is under
- * {@code com.google.android.gm.ads.} and its name ends in
+ * {@code com.google.android.gm.ads.} or
+ * {@code com.google.android.apps.gmail.libraries.ads.} and its name ends in
  * {@code AdTeaserItemView}) is decided by {@code brainfuck/src/row.bf}; this
  * class only caches the verdict per class.</p>
  */
