@@ -1,31 +1,32 @@
-# Gmail Hide Ads v2.1.0
+# Gmail Hide Ads v2.1.1
 
-## DexKit discovery, narrow hooks and hot reload
+## Ads are hidden again on Gmail 2026.11
 
-This release changes how rows are caught, not which rows are removed.
+Gmail `2026.11.09` moved its ad row classes from `com.google.android.gm.ads` to `com.google.android.apps.gmail.libraries.ads`, keeping their names. 2.1.0 found none of them there, fell back to the `addView` hook, and let every ad through.
 
-### Changed
+### Fixed
 
-- Ad row classes are found once at start-up with DexKit: every class in `com.google.android.gm.ads` is judged by the same `row.bf` program that judges rows at runtime. The names found are cached per Gmail build, so later cold starts skip the scan (about 2 ms instead of about 300 ms on a Pixel 8 Pro).
-- Only the ad rows are hooked: each one's own `onFinishInflate`, where the row is collapsed before it is ever measured, and collapsed again whenever it is attached, because Gmail's bind sets its visibility afterwards. The global `ViewGroup.addView` hook is now only the fallback when discovery finds nothing hookable.
-- Hot reload: installing a new build while Gmail runs swaps the module in place, with no force-stop.
-- Requires libxposed API 102 (`minApiVersion=102`).
-- Adds DexKit `2.2.0` (LGPL-3.0-or-later).
+- `row.bf` accepts both ad packages: a class is an ad row when its name starts with `com.google.android.gm.ads.` or `com.google.android.apps.gmail.libraries.ads.` and ends with `AdTeaserItemView` (`docs/policy/row.md`). The prefix machine became a trie that branches after `com.google.android.`; the name alphabet gained `p` and `b` (`NC_P`, `NC_B`, appended).
+- DexKit discovery searches both packages.
+
+### Also in this release
+
+- bfcc, the Brainfuck compiler written in Brainfuck, generates and checks the policy files; its output is byte-identical to the Python compiler's, so the shipped policy code is unchanged by it (`docs/BFCC.md`).
 
 ### Verified
 
-- On a Pixel 8 Pro (Android 17, Vector 2.2, API 102) with Gmail `2026.09.07.986350278.Release`: DexKit found and `row.bf` accepted all six ad row classes in 289 ms; the next cold start read them from the cache in 2 ms; installing this build over 2.0.0 hot reloaded into the running Gmail process (same PID), replaced the hooks and took the stale one off.
-- `gradle check`: Brainfuck generation, toolchain tests, parity and robustness suites and lint pass.
+- On a Pixel 8 Pro (Android 17, Vector 2.2, API 102) with Gmail `2026.11.09.1019722178.Release`: DexKit found and `row.bf` accepted 6 ad row classes in 310 ms, 2 ms from the cache on the next start; the inflate layer installed; a live `ImageCarouselAdTeaserItemView` ad in Promotions was collapsed with no gap left (`bfFailures=0`).
+- Toolchain and program tests (26), BBC-built policy fixtures, the bfcc self-hosting chain, `bfcc gen --check`, and the JVM parity, robustness and benchmark suites (16) pass.
 
-Gmail served no advertisement during testing, so the collapse of a live ad row by the new hook has not yet been observed; the fallback `addView` path is the one validated on 1.0.0. LSPatch, 32-bit and x86 devices were not run for this release.
+Older Gmail builds with the `com.google.android.gm.ads` package were covered by the parity tests only, not re-run on a device. LSPatch, 32-bit and x86 devices were not run for this release.
 
 ### Version metadata
 
-- Version name: `2.1.0`
-- Android version code: `4`
-- Git tag: `v2.1.0`
-- APK filename: `GmailHideAds-v2.1.0.apk`
+- Version name: `2.1.1`
+- Android version code: `5`
+- Git tag: `v2.1.1`
+- APK filename: `GmailHideAds-v2.1.1.apk`
 
 ### Updating
 
-Install the v2.1.0 APK over 2.0.0. With Gmail running, Vector hot reloads it; otherwise force-stop and reopen Gmail. Confirm the framework log reports `Layer installed: ad-teaser inflate`.
+Install the v2.1.1 APK over 2.1.0. With Gmail running, Vector hot reloads it; otherwise force-stop and reopen Gmail. Confirm the framework log reports `ad row class(es) found by DexKit` with a non-zero count and `Layer installed: ad-teaser inflate`.

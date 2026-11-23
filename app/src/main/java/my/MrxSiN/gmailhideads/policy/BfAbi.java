@@ -39,6 +39,8 @@ final class BfAbi {
     static final int NC_UP_T = 17;
     static final int NC_UP_I = 18;
     static final int NC_UP_V = 19;
+    static final int NC_P = 20;
+    static final int NC_B = 21;
     static final int MAX_CHUNK = 255;
     static final int MAX_NAMES = 255;
     static final int RUNTIME_TAPE_MAX = 256;

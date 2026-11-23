@@ -24,6 +24,10 @@ import my.MrxSiN.gmailhideads.legacy.LegacyGmailProfile;
  * Old Java result must equal new Brainfuck result: the frozen v1.0.0 policy
  * (legacy package) against libgmailbf, on real classes, randomized names and
  * every BMP character. Randomized counts scale with -PparityCases.
+ *
+ * <p>One intentional delta from v1.0.0: Gmail 2026.11.09 moved the same row
+ * classes to {@link #APPS_PREFIX}, which row.bf also accepts
+ * (docs/policy/row.md). The oracle is the frozen rule or that prefix.</p>
  */
 public class PolicyParityTest {
 
@@ -31,6 +35,8 @@ public class PolicyParityTest {
     private static final String SUFFIX = "AdTeaserItemView";
     private static final String TARGET = "com.google.android.gm";
     private static final String ROW = "com.google.android.gm.ads.adteaser.BasicAdTeaserItemView";
+    private static final String APPS_PREFIX = "com.google.android.apps.gmail.libraries.ads.";
+    private static final String APPS_ROW = APPS_PREFIX + "adteaser.BasicAdTeaserItemView";
 
     private static final int CASES = HostCore.parityCases();
     private static long total;
@@ -51,7 +57,8 @@ public class PolicyParityTest {
 
     private static int legacyRow(String... names) {
         for (String name : names) {
-            if (LegacyAdTeaserViewDetector.matchesName(name)) {
+            if (LegacyAdTeaserViewDetector.matchesName(name)
+                    || name.startsWith(APPS_PREFIX) && name.endsWith(SUFFIX)) {
                 return 1;
             }
         }
@@ -99,7 +106,8 @@ public class PolicyParityTest {
         Random random = new Random(0x6D61696C);
         String[] pieces = {PREFIX, SUFFIX, "adteaser.", "Basic", "Video", "Ad", "Teaser", "Item", "View",
                 "com.", "google.", "android.", "gm.", "ads.", ".", "$1", "x", "AAd", "é", "ﬀ",
-                "\u0000", "com.google.android.gm", "Z"};
+                "\u0000", "com.google.android.gm", "Z",
+                APPS_PREFIX, "apps.", "gmail.", "libraries.", "p", "b", "com.google.android.a"};
         int hits = 0;
         for (int index = 0; index < CASES; index++) {
             String[] names = new String[random.nextInt(5)];
@@ -116,9 +124,9 @@ public class PolicyParityTest {
     private static String randomName(Random random, String[] pieces) {
         int kind = random.nextInt(10);
         if (kind < 3) {
-            StringBuilder out = new StringBuilder(ROW);
+            StringBuilder out = new StringBuilder(random.nextBoolean() ? ROW : APPS_ROW);
             int at = random.nextInt(out.length());
-            char c = "AdTeaserItemViewcom.gl xZ".charAt(random.nextInt(25));
+            char c = "AdTeaserItemViewcom.gl xZpb".charAt(random.nextInt(27));
             switch (random.nextInt(3)) {
                 case 0:
                     out.insert(at, c);
@@ -147,6 +155,10 @@ public class PolicyParityTest {
                 PREFIX + "adteaser.Basic%s" + SUFFIX.substring(1),           // replaces the suffix A
                 ROW.substring(0, ROW.length() - 1) + "%s",                   // replaces the last char
                 ROW + "%s",                             // appended
+                "com.google.android.%s" + APPS_ROW.substring(20),            // replaces the branch a
+                APPS_PREFIX.substring(0, 21) + "%s" + APPS_ROW.substring(22), // replaces a p
+                APPS_PREFIX.substring(0, 32) + "%s" + APPS_ROW.substring(33), // replaces the b
+                APPS_PREFIX.substring(0, 43) + "%s" + "adteaser.Basic" + SUFFIX,  // replaces the last dot
         };
         char[] one = new char[1];
         for (String context : contexts) {
@@ -164,9 +176,10 @@ public class PolicyParityTest {
         for (int length = 0; length <= 1100; length++) {
             assertRowParity(PREFIX + middle + SUFFIX);
             assertRowParity(PREFIX + middle + SUFFIX + "x");
+            assertRowParity(APPS_PREFIX + middle + SUFFIX);
             middle.append((char) ('a' + length % 26));
         }
-        count(2 * 1101);
+        count(3 * 1101);
     }
 
     @Test

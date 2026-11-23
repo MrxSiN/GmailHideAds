@@ -32,8 +32,12 @@ import my.MrxSiN.gmailhideads.detect.AdTeaserViewDetector;
  */
 public final class AdRowDiscovery {
 
-    /** Search scope only: a wrong scope finds nothing and the caller falls back. */
-    private static final String ADS_PACKAGE = "com.google.android.gm.ads";
+    /**
+     * Search scope only: a wrong scope finds nothing and the caller falls back.
+     * Gmail 2026.11 moved the rows from the first package to the second.
+     */
+    private static final String[] ADS_PACKAGES = {
+            "com.google.android.gm.ads", "com.google.android.apps.gmail.libraries.ads"};
 
     private static final String PREFERENCES = "gmailhideads_discovery";
     private static final String KEY_SOURCE = "source";
@@ -80,7 +84,7 @@ public final class AdRowDiscovery {
         System.loadLibrary("dexkit");
         List<Class<?>> rows = new ArrayList<>();
         try (DexKitBridge bridge = DexKitBridge.create(loader, true)) {
-            for (ClassData data : bridge.findClass(FindClass.create().searchPackages(ADS_PACKAGE))) {
+            for (ClassData data : bridge.findClass(FindClass.create().searchPackages(ADS_PACKAGES))) {
                 Class<?> type;
                 try {
                     type = data.getInstance(loader);

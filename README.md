@@ -99,6 +99,9 @@ classes is never rebound to a message, and there is nothing to restore.
 
 ## Status
 
+**v2.1.1.** Gmail 2026.11.09 moved the ad row classes to
+`com.google.android.apps.gmail.libraries.ads`; `row.bf` now accepts that package as well as the old one.
+
 **v2.1.0.** DexKit discovery of the ad row classes, hooks on those classes only, and hot reload.
 On a Pixel 8 Pro the scan takes about 300 ms once per Gmail build and 2 ms from the cache after that.
 
@@ -107,7 +110,7 @@ The 1.0.0 Java policy was frozen as an oracle first, and the new programs answer
 634 229 randomized and exhaustive comparisons on the JVM and on an arm64 phone
 ([`docs/BRAINFUCK_ARCHITECTURE.md`](docs/BRAINFUCK_ARCHITECTURE.md)).
 
-The release version is `2.1.0` (`versionCode 4`).
+The release version is `2.1.1` (`versionCode 5`).
 
 ### Compatibility
 
@@ -116,14 +119,13 @@ adding a row.
 
 | Device | Android | Framework | Gmail | Module | Result | Tester | Date |
 |---|---|---|---|---|---|---|---|
+| Pixel 8 Pro | 17 | Vector 2.2 (API 102) | 2026.11.09.1019722178 | 2.1.1 | DexKit found 6 row classes in the new package (310 ms, 2 ms cached); inflate layer installed; a real `ImageCarouselAdTeaserItemView` ad collapsed in Promotions, no gap | @MrxSiN | 2026-11 |
 | Pixel 8 Pro | 17 | Vector 2.2 (API 102) | 2026.09.07.986350278 | 2.1.0 | DexKit found 6 row classes (289 ms, 2 ms cached); inflate layer installed; hot reload over 2.0.0 in the running process. No ad served, so no live collapse yet | @MrxSiN | 2026-09 |
 | Pixel 8 Pro | 17 | — (instrumented tests) | — | 2.0.0 | 16 policy tests pass on arm64: 634 229 parity comparisons, robustness, concurrency | @MrxSiN | 2026-09 |
 | Pixel 8 Pro | 17 | Vector 2.2 (API 102) | 2026.08.17.974752392 | 1.0.0 | Layer installed; a real sponsored row collapsed in Promotions, no gap; no ordinary mail touched | @MrxSiN | 2026-09 |
 
 ### Known limits
 
-- **2.1.0 in Gmail**: discovery, the inflate hooks and hot reload run inside Gmail, but no ad was
-  served while testing, so the new hook has not yet been seen collapsing a live row.
 - Gmail serves ads intermittently, so no side-by-side capture of the same row with the module off
   exists; the 1.0.0 evidence is the logged removal of a genuine ad row.
 - Vector hot reloads only when the `versionCode` changes; force-stop Gmail otherwise.

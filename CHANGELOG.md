@@ -2,12 +2,14 @@
 
 All notable changes to Gmail Hide Ads are documented here.
 
-## Unreleased
+## 2.1.1 - 2026-11-23
 
+- Hide ads on Gmail 2026.11.09 and later, which moved the ad row classes to `com.google.android.apps.gmail.libraries.ads`: `row.bf` accepts that package as well as `com.google.android.gm.ads` (the prefix machine branches after `com.google.android.`), the name alphabet gains `p` and `b`, and DexKit searches both packages.
 - Replace the Python Brainfuck compiler with bfcc, a compiler written in Brainfuck that compiles itself (`brainfuck/compiler/bfcc.bf`, `docs/BFCC.md`). It runs the same algorithm as the Python optimizer (runs, clear, transfer and run-once loops, peephole, value and copy propagation, equality tests and `switch` runs) plus the source checker and the memory map, and its output is byte-identical: the policy C and its run time are unchanged.
 - Generate and check the policy files with bfcc, built from its committed self-compiled C by the host C compiler (`./gradlew :app:generateBrainfuck`, `checkBrainfuck`); Python is only needed for the tests and the bootstrap check.
 - CI verifies the bootstrap chain: the Python compiler compiles bfcc, bfcc compiles itself twice, the two results and the committed C agree byte for byte, and the result regenerates the policy programs.
 - Generation of the policy files takes 0.08 s instead of 0.14 s, and compiling bfcc's 5.8 MB of Brainfuck 2.6 s instead of 13.9 s.
+- Increased Android `versionCode` from `4` to `5`.
 
 ## 2.1.0 - 2026-09-26
 

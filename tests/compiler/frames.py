@@ -13,13 +13,15 @@ from bftool import gen  # noqa: E402
 C = gen.abi_constants()
 
 AD_PREFIX = "com.google.android.gm.ads."
+# Gmail 2026.11.09 moved the same row classes here (docs/policy/row.md).
+APPS_PREFIX = "com.google.android.apps.gmail.libraries.ads."
 AD_SUFFIX = "AdTeaserItemView"
 TARGET = "com.google.android.gm"
 
 NAME_LETTERS = {".": "NC_DOT", "c": "NC_C", "o": "NC_O", "m": "NC_M", "g": "NC_G", "l": "NC_L",
                 "e": "NC_E", "a": "NC_A", "n": "NC_N", "d": "NC_D", "r": "NC_R", "i": "NC_I",
                 "s": "NC_S", "t": "NC_T", "w": "NC_W", "A": "NC_UP_A", "T": "NC_UP_T",
-                "I": "NC_UP_I", "V": "NC_UP_V"}
+                "I": "NC_UP_I", "V": "NC_UP_V", "p": "NC_P", "b": "NC_B"}
 
 
 def name_code(ch):
@@ -66,7 +68,7 @@ def parse(out, op, length, request_id=0x1234):
 
 
 def legacy_ad_row(names):
-    return int(any(n.startswith(AD_PREFIX) and n.endswith(AD_SUFFIX) for n in names))
+    return int(any(n.startswith((AD_PREFIX, APPS_PREFIX)) and n.endswith(AD_SUFFIX) for n in names))
 
 
 def legacy_scope(package, process):

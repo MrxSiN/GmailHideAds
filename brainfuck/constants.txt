@@ -29,7 +29,8 @@ const V_NO = 0
 const V_YES = 1
 
 # Name alphabet (host normalization, case sensitive): only the characters of
-# "com.google.android.gm.ads." and "AdTeaserItemView" are told apart.
+# "com.google.android.gm.ads.", "com.google.android.apps.gmail.libraries.ads."
+# and "AdTeaserItemView" are told apart.
 const NC_OTHER = 0
 const NC_DOT = 1
 const NC_C = 2
@@ -50,6 +51,8 @@ const NC_UP_A = 16
 const NC_UP_T = 17
 const NC_UP_I = 18
 const NC_UP_V = 19
+const NC_P = 20
+const NC_B = 21
 
 # Request framing limits.
 const MAX_CHUNK = 255

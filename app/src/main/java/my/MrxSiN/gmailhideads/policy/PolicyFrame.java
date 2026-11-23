@@ -28,12 +28,12 @@ final class PolicyFrame {
     private static final byte[] NAME_CODES = new byte[128];
 
     static {
-        String letters = ".comglearndistwATIV";
+        String letters = ".comglearndistwATIVpb";
         int[] codes = {
                 BfAbi.NC_DOT, BfAbi.NC_C, BfAbi.NC_O, BfAbi.NC_M, BfAbi.NC_G, BfAbi.NC_L,
                 BfAbi.NC_E, BfAbi.NC_A, BfAbi.NC_R, BfAbi.NC_N, BfAbi.NC_D, BfAbi.NC_I,
                 BfAbi.NC_S, BfAbi.NC_T, BfAbi.NC_W, BfAbi.NC_UP_A, BfAbi.NC_UP_T, BfAbi.NC_UP_I,
-                BfAbi.NC_UP_V
+                BfAbi.NC_UP_V, BfAbi.NC_P, BfAbi.NC_B
         };
         for (int index = 0; index < letters.length(); index++) {
             NAME_CODES[letters.charAt(index)] = (byte) codes[index];

@@ -35,6 +35,8 @@
 #define BF_NC_UP_T 17
 #define BF_NC_UP_I 18
 #define BF_NC_UP_V 19
+#define BF_NC_P 20
+#define BF_NC_B 21
 #define BF_MAX_CHUNK 255
 #define BF_MAX_NAMES 255
 #define BF_RUNTIME_TAPE_MAX 256
