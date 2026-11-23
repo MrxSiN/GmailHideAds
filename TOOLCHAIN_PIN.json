@@ -1,0 +1,4 @@
+{
+ "format": "gmailhideads-toolchain-pin-v1",
+ "bbc": {"repository": "https://github.com/MrxSiN/BBC", "commit": "12f0d64", "xax_release": "0040", "bbc_exe_sha256": "4b73ad612bcf6243a5795c1d1680bb2cc432019f066194a0edc3c4000cc410d8"}
+}
